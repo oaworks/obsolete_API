@@ -1,4 +1,4 @@
-
+'''
 import unidecode from 'unidecode'
 
 @oab_availability = new API.collection {index:"oab",type:"availability"}
@@ -136,7 +136,7 @@ API.add 'service/oab/scripts/avail2find',
         subject: 'Availabilities to finds complete'
         text: 'Availabilities found and processed: ' + processed
       return processed
-
+'''
 
 
 

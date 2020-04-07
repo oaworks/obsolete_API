@@ -1,3 +1,4 @@
+'''
 API.add 'service/oab/scripts/cleanusers',
   get: 
     #roleRequired: 'root'
@@ -55,7 +56,7 @@ API.add 'service/oab/scripts/cleanusers',
         text: 'Users processed: ' + processed + '\n\nUsers found and kept: ' + users.length + '\n\nNever retrieved:' + never + '\n\nOld: ' + old + '\n\nBad: ' + bad
 
       return dev: dev, processed: processed, old: old, never: never, bad: bad, reload: users.length
-
+'''
 
 
 

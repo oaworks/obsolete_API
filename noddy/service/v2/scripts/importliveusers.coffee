@@ -1,4 +1,4 @@
-
+'''
 import fs from 'fs'
 
 API.add 'service/oab/scripts/importliveusers',
@@ -65,5 +65,5 @@ API.add 'service/oab/scripts/importliveusers',
 
       console.log processed, bad, loaded
       return loaded
-
+'''
 

@@ -1,4 +1,4 @@
-
+'''
 API.add 'service/oab/scripts/zenodofiles',
   csv: true
   get: 
@@ -12,3 +12,4 @@ API.add 'service/oab/scripts/zenodofiles',
           fl = 'https://zenodo.org/' + pg.split('<a class="filename" href="')[1].split('">')[0]
           res.push fl
       return res
+'''
