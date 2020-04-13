@@ -427,7 +427,8 @@ API.service.oab.ill.config = (user, config) ->
         update[k] = if config[k] is true and not uc[k] then Date.now() else '$DELETE'
       else
         update[k] = config[k] if config[k]?
-    if JSON.stringify(update) isnt '{}'
+    jsu = JSON.stringify(update)
+    if jsu isnt '{}' and jsu.indexOf('<script') is -1
       if not user.service.openaccessbutton.ill?
         Users.update user._id, {'service.openaccessbutton.ill': {config: update}}
       else
@@ -500,7 +501,8 @@ API.service.oab.ill.openurl = (uid, meta={}, withoutbase=false) ->
             v = meta.author.family + if meta.author.given then ', ' + meta.author.given else ''
           else
             v = JSON.stringify meta.author
-    else if k not in ['started','ended','took','terms','book','other','cost','time','email','redirect','url','source','notes','createdAt','created_date','_id']
+    #else if k not in ['started','ended','took','terms','book','other','cost','time','email','redirect','url','source','notes','createdAt','created_date','_id']
+    else if k in ['doi','pmid','pmc','pmcid','url','journal','title','issn','volume','issue','page','crossref_type','publisher','published']
       v = meta[k]
     if v
       url += (if config[k] then config[k] else k) + '=' + encodeURIComponent(v) + '&'

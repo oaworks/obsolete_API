@@ -138,7 +138,8 @@ API.service.oab.permissions = (meta={}, file, url, confirmed, uid) ->
   else
     _clean = (str) -> return str.toLowerCase().replace(/[^a-z0-9\/\.]+/g, "").replace(/\s\s+/g, ' ').trim()
 
-    lowercontentsmall = (if content.length < 20000 then content else content.substring(0,6000) + content.substring(content.length-6000,content.length)).toLowerCase()
+    contentsmall = if content.length < 20000 then content else content.substring(0,6000) + content.substring(content.length-6000,content.length)
+    lowercontentsmall = contentsmall.toLowerCase()
     lowercontentstart = _clean(if lowercontentsmall.length < 6000 then lowercontentsmall else lowercontentsmall.substring(0,6000))
 
     f.name ?= meta.title
@@ -203,9 +204,11 @@ API.service.oab.permissions = (meta={}, file, url, confirmed, uid) ->
               wts = wts.replace('<<'+wtm+'>>',meta[wtm.toLowerCase()]) if meta[wtm.toLowerCase()]?
             matched = false
             if l.howtosearch is 'string'
-              wtsc = _clean wts
-              matched = if (l.wheretosearch is 'file' and _clean(lowercontentsmall).indexOf(wtsc) isnt -1) or (l.wheretosearch isnt 'file' and ((meta.title? and _clean(meta.title).indexOf(wtsc) isnt -1) or (f.name? and _clean(f.name).indexOf(wtsc) isnt -1))) then true else false
+              #wtsc = _clean wts
+              #matched = if (l.wheretosearch is 'file' and _clean(lowercontentsmall).indexOf(wtsc) isnt -1) or (l.wheretosearch isnt 'file' and ((meta.title? and _clean(meta.title).indexOf(wtsc) isnt -1) or (f.name? and _clean(f.name).indexOf(wtsc) isnt -1))) then true else false
+              matched = if (l.wheretosearch is 'file' and contentsmall.indexOf(wts) isnt -1) or (l.wheretosearch isnt 'file' and ((meta.title? and meta.title.indexOf(wts) isnt -1) or (f.name? and f.name.indexOf(wts) isnt -1))) then true else false
             else
+              # could change this to be explicit and not use lowercasing, if wanting more exactness
               re = new RegExp wts, 'gium'
               matched = if (l.wheretosearch is 'file' and lowercontentsmall.match(re) isnt null) or (l.wheretosearch isnt 'file' and ((meta.title? and meta.title.match(re) isnt null) or (f.name? and f.name.match(re) isnt null))) then true else false
             if matched
@@ -218,7 +221,7 @@ API.service.oab.permissions = (meta={}, file, url, confirmed, uid) ->
 
       f.version = 'publisher pdf' if f.version_evidence.score > 0
       f.version = 'postprint' if f.version_evidence.score < 0
-      if f.version is 'unknown' and f.format? and f.format isnt 'pdf'
+      if f.version is 'unknown' #and f.format? and f.format isnt 'pdf'
         f.version = 'postprint'
       f.version_standard = if f.version is 'preprint' then 'submittedVersion' else if f.version is 'postprint' then 'acceptedVersion' else if f.version is 'publisher pdf' then 'publishedVersion' else undefined
 

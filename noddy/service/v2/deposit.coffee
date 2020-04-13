@@ -198,7 +198,7 @@ API.service.oab.deposit = (d,options={},files,uid) ->
     else if API.settings.service.openaccessbutton?.zenodo?.prereserve_doi
       meta.prereserve_doi = true
     meta['access_right'] = 'open'
-    meta.license = perms.permissions.licence_required ? 'cc-by'
+    meta.license = perms.permissions.licence_required ? 'cc-by' # zenodo also accepts other-closed and other-nc, possibly more
     meta.license += '-4.0' if meta.license.toLowerCase().indexOf('cc') is 0 and isNaN(parseInt(meta.license.substring(meta.license.length-1)))
     if perms.permissions.embargo?
       meta['access_right'] = 'embargoed'
@@ -298,7 +298,8 @@ API.service.oab.deposit.config = (user, config) ->
       else
         update[k] = config[k] if config[k]?
         try update[k] = update[k].split('communities/')[1].split('/')[0] if k is 'community' and update[k].indexOf('/') isnt -1
-    if JSON.stringify(update) isnt '{}'
+    jsu = JSON.stringify(update)
+    if jsu isnt '{}' and jsu.indexOf('<script') is -1
       if not user.service.openaccessbutton.deposit?
         Users.update user._id, {'service.openaccessbutton.deposit': {config: update}}
       else
