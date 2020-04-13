@@ -221,7 +221,7 @@ API.service.oab.permissions = (meta={}, file, url, confirmed, uid) ->
 
       f.version = 'publisher pdf' if f.version_evidence.score > 0
       f.version = 'postprint' if f.version_evidence.score < 0
-      if f.version is 'unknown' #and f.format? and f.format isnt 'pdf'
+      if f.version is 'unknown' and f.version_evidence.strings_checked > 0 #and f.format? and f.format isnt 'pdf'
         f.version = 'postprint'
       f.version_standard = if f.version is 'preprint' then 'submittedVersion' else if f.version is 'postprint' then 'acceptedVersion' else if f.version is 'publisher pdf' then 'publishedVersion' else undefined
 
