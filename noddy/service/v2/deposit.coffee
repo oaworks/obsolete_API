@@ -170,9 +170,14 @@ API.service.oab.deposit = (d,options={},files,uid) ->
     creators = []
     try
       for a in d.metadata.author
-        creators.push({name: a.family + (if a.given then ', ' + a.given else '')}) if a.family?
+        if a.family?
+          at = {name: a.family + (if a.given then ', ' + a.given else '')}
+          try at.orcid = a.ORCID.split('/').pop() if a.ORCID
+          try at.affiliation = a.affiliation.name if typeof a.affiliation is 'object' and a.affiliation.name?
+          creators.push at 
     creators = [{name:'Unknown'}] if creators.length is 0
-    description = perms.permissions.required_statement ? (if d.metadata.doi? then 'The publisher\'s final version of this work can be found at https://doi.org/' + d.metadata.doi else '')
+    description = if d.metadata.abstract then d.metadata.abstract + ' ' else ''
+    description += perms.permissions.required_statement ? (if d.metadata.doi? then 'The publisher\'s final version of this work can be found at https://doi.org/' + d.metadata.doi else '')
     description = description.trim()
     description += '.' if description.lastIndexOf('.') isnt description.length-1
     description += ' ' if description.length
@@ -186,7 +191,7 @@ API.service.oab.deposit = (d,options={},files,uid) ->
       journal_volume: d.metadata.volume
       journal_issue: d.metadata.issue
       journal_pages: d.metadata.page
-    meta.keywords = d.metadata.keywords if _.isArray(d.metadata.keywords) and d.metadata.keywords.length and typeof d.metadata.keywords[0] is 'string'
+    meta.keywords = d.metadata.keyword if _.isArray(d.metadata.keyword) and d.metadata.keyword.length and typeof d.metadata.keyword[0] is 'string'
     if d.metadata.doi?
       in_zenodo = API.use.zenodo.records.doi d.metadata.doi
       if in_zenodo and options.confirmed isnt perms.file.checksum and not API.settings.dev
@@ -269,6 +274,11 @@ API.service.oab.deposit = (d,options={},files,uid) ->
       if author.family
         as.push (if author.given then author.given + ' ' else '') + author.family
     ed.metadata.author = as
+  ed.confirmed += encodeURIComponent(perms.file.checksum) if perms?.file?.checksum?
+  ed.adminlink = (if ed.embedded then ed.embedded else 'https://shareyourpaper.org' + (if ed.metadata?.doi? then '/' + ed.metadata.doi else ''))
+  ed.adminlink += if ed.adminlink.indexOf('?') is -1 then '?' else '&'
+  ed.adminlink += 'confirmed=' + encodeURIComponent(perms.file.checksum) + '&' if perms?.file?.checksum?
+  ed.adminlink += 'email=' + ed.email
   tmpl = API.mail.template dep.type + '_deposit.html'
   sub = API.service.oab.substitute tmpl.content, ed
   if perms.file?.archivable isnt false # so when true or when undefined if no file is given
@@ -294,7 +304,7 @@ API.service.oab.deposit.config = (user, config) ->
     update = {}
     for k in ['depositdate','community','institution_name','repo_name','email_domains','deposit_terms','old_way','deposit_help','email_for_manual_review','file_review_time','if_no_doi_go_here','email_for_feedback','sayarticle','allow_oa_deposit','library_handles_dark_deposit_requests','dark_deposit_off','ROR_ID','high_performance','live','pilot','activate_try_it_and_learn_more','not_a_library']
       if k in ['pilot','live']
-        update[k] = if config[k] is true and not uc[k] then Date.now() else '$DELETE'
+        update[k] = Date.now() if config[k] is true and not uc[k]
       else
         update[k] = config[k] if config[k]?
         try update[k] = update[k].split('communities/')[1].split('/')[0] if k is 'community' and update[k].indexOf('/') isnt -1

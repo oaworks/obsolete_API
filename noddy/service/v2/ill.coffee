@@ -412,7 +412,7 @@ API.service.oab.ill.config = (user, config) ->
   if config?
     uc = user.service?.openaccessbutton?.ill?.config ? {}
     update = {}
-    for k in ['ill_institution','ill_redirect_base_url','ill_redirect_params','method','sid','title','doi','pmid','pmcid','author','journal','issn','volume','issue','page','published','year','terms','book','other','cost','time','email','problem_email','subscription','subscription_type','val','search','autorun','autorunparams','intropara','norequests','noillifoa','noillifsub','saypaper','pilot','live']
+    for k in ['ill_institution','ill_redirect_base_url','ill_redirect_params','method','sid','title','doi','pmid','pmcid','author','journal','issn','volume','issue','page','published','year','notes','terms','book','other','cost','time','email','problem_email','viewaccount','subscription','subscription_type','val','search','autorun','autorunparams','intropara','norequests','illinfo','noillifoa','noillifsub','saypaper','pilot','live','advancedform']
       if k is 'ill_redirect_base_url' and config[k]?
         if config[k].indexOf('illiad.dll') isnt -1 and config[k].toLowerCase().indexOf('action=') is -1
           config[k] = config[k].split('?')[0]
@@ -424,7 +424,7 @@ API.service.oab.ill.config = (user, config) ->
           config[k] = config[k].split('?')[0]
           config[k] += '?genre=article'
       if k in ['pilot','live']
-        update[k] = if config[k] is true and not uc[k] then Date.now() else '$DELETE'
+        update[k] = Date.now() if config[k] is true and (not uc[k] or uc[k] is '$DELETE')
       else
         update[k] = config[k] if config[k]?
     jsu = JSON.stringify(update)
@@ -501,17 +501,17 @@ API.service.oab.ill.openurl = (uid, meta={}, withoutbase=false) ->
             v = meta.author.family + if meta.author.given then ', ' + meta.author.given else ''
           else
             v = JSON.stringify meta.author
-    #else if k not in ['started','ended','took','terms','book','other','cost','time','email','redirect','url','source','notes','createdAt','created_date','_id']
     else if k in ['doi','pmid','pmc','pmcid','url','journal','title','issn','volume','issue','page','crossref_type','publisher','published']
       v = meta[k]
     if v
       url += (if config[k] then config[k] else k) + '=' + encodeURIComponent(v) + '&'
   if meta.usermetadata
+    nfield = if config.notes then config.notes else 'notes'
     url = url.replace('usermetadata=true','')
-    if url.indexOf('notes=') is -1
-      url += '&notes=The user provided some metadata.'
+    if url.indexOf(nfield+'=') is -1
+      url += '&' + nfield + '=The user provided some metadata.'
     else
-      url.replace('notes=','notes=The user provided some metadata. ')
+      url.replace(nfield+'=',nfield+'=The user provided some metadata. ')
   return url.replace('/&&/g','&')
 
 API.service.oab.ill.terms = (uid) ->

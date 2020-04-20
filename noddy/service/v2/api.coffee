@@ -356,7 +356,7 @@ API.service.oab.validate = (email, domain) ->
   else
     v = API.mail.validate email, API.settings.service.openaccessbutton.mail.pubkey
     if v.is_valid
-      if domain and domain not in ['qZooaHWRz9NLFNcgR','eZwJ83xp3oZDaec86']
+      if false #domain and domain not in ['qZooaHWRz9NLFNcgR','eZwJ83xp3oZDaec86'] # turning this off for now
         iacc = API.accounts.retrieve domain
         return 'baddomain' if not iacc?
         eml = false #iacc.email ? iacc.emails[0].address # may also later have a config where the allowed domains can be listed but for now just match the domain of the account holder - only in the case where shareyourpaper config exists

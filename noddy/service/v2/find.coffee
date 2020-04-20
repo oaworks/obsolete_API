@@ -13,7 +13,7 @@ API.service.oab.ftitle = (title) ->
     ft += tp
   return ft
 
-_finder = (metadata) ->
+API.service.oab._finder = (metadata) ->
   finder = ''
   for tid in ['doi','pmid','pmcid','url','title']
     if typeof metadata[tid] is 'string' or typeof metadata[tid] is 'number' or _.isArray metadata[tid]
@@ -21,14 +21,14 @@ _finder = (metadata) ->
       if typeof mt is 'number' or (typeof mt is 'string' and mt.length > 5) # people pass n/a and such into title, so ignore anything too small to be a title or a valid id
         finder += ' OR ' if finder isnt ''
         if tid is 'title'
-          finder += 'ftitle:' + API.service.oab.ftitle(mt) + '~ OR '
+          finder += 'ftitle:' + API.service.oab.ftitle(mt) + ' OR '
         if tid is 'doi'
           finder += 'doi_not_in_crossref.exact:"' + mt + '" OR '
         finder += 'metadata.' + tid + (if tid is 'url' or tid is 'title' then '' else '.exact') + ':"' + mt + '"'
   return finder
 
 oab_catalogue.finder = (metadata) ->
-  finder = _finder metadata
+  finder = API.service.oab._finder metadata
   return if finder isnt '' then oab_catalogue.find(finder, true) else undefined
 
 _find =
@@ -325,6 +325,10 @@ API.service.oab.find = (options={}, metadata={}, content) ->
     catalogued = oab_catalogue.finder metadata
     # if user wants a total refresh, don't use any of it (we still search for it though, because will overwrite later with the fresh stuff)
     delete catalogued.found.oabutton if catalogued?.found?.oabutton? # fix for mistakenly cached things, we now won't record as found in OAB, just show as cached response
+    if _.isArray catalogued?.found?.epmc?
+      delete catalogued.found.epmc 
+      delete catalogued.url if _.isArray catalogued.url
+      delete catalogued.metadata.url if _.isArray catalogued.metadata?.url
     if catalogued? and res.refresh isnt 0
       res.permissions ?= catalogued.permissions if catalogued.permissions?.permissions? and not catalogued.permissions?.error? and (catalogued.metadata?.journal? or catalogued.metadata?.issn?)
       if 'oabutton' in res.sources
