@@ -1,5 +1,5 @@
 
-API.add 'service/oab/scripts/cleanusers',
+'''API.add 'service/oab/scripts/cleanusers',
   get: 
     #roleRequired: 'root'
     action: () ->
@@ -34,7 +34,7 @@ API.add 'service/oab/scripts/cleanusers',
         text: 'Users processed: ' + processed + '\n\nUsers found and fixed: ' + fixed
 
       return dev: dev, action: action, processed: processed, fixed: fixed
-
+'''
 
 
 

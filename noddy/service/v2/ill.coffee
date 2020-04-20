@@ -37,6 +37,14 @@ API.add 'service/oab/ill',
         opts.api = true
       return API.service.oab.ill.start opts
 
+API.add 'service/oab/ill/collect',
+  get: () ->
+    url = 'https://script.google.com/macros/s/AKfycbwPq7xWoTLwnqZHv7gJAwtsHRkreJ1hMJVeeplxDG_MipdIamU6/exec?'
+    for q of this.queryParams
+      url += q + '=' + this.queryParams[q] + '&'
+    HTTP.call 'GET', url
+    return true
+
 API.add 'service/oab/ill/openurl',
   get: () ->
     return 'Will eventually redirect after reading openurl params passed here, somehow. For now a POST of metadata here by a user with an open ulr registered will build their openurl'
