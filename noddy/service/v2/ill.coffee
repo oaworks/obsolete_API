@@ -42,7 +42,7 @@ API.add 'service/oab/ill/collect/:sid',
     # example AKfycbwPq7xWoTLwnqZHv7gJAwtsHRkreJ1hMJVeeplxDG_MipdIamU6
     url = 'https://script.google.com/macros/s/' + this.urlParams.sid + '/exec?'
     for q of this.queryParams
-      url += decodeURIComponent(q) + '=' + decodeURIComponent(this.queryParams[q]) + '&'
+      url += q + '=' + this.queryParams[q] + '&'
     HTTP.call 'GET', url
     return true
 
