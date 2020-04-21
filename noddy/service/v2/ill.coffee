@@ -37,11 +37,12 @@ API.add 'service/oab/ill',
         opts.api = true
       return API.service.oab.ill.start opts
 
-API.add 'service/oab/ill/collect',
+API.add 'service/oab/ill/collect/:sid',
   get: () ->
-    url = 'https://script.google.com/macros/s/AKfycbwPq7xWoTLwnqZHv7gJAwtsHRkreJ1hMJVeeplxDG_MipdIamU6/exec?'
+    # example AKfycbwPq7xWoTLwnqZHv7gJAwtsHRkreJ1hMJVeeplxDG_MipdIamU6
+    url = 'https://script.google.com/macros/s/' + this.urlParams.sid + '/exec?'
     for q of this.queryParams
-      url += q + '=' + this.queryParams[q] + '&'
+      url += decodeURIComponent(q) + '=' + decodeURIComponent(this.queryParams[q]) + '&'
     HTTP.call 'GET', url
     return true
 
