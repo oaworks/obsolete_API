@@ -104,7 +104,7 @@ API.service.oab.availability = (opts,v2) ->
       afnd.data.meta.article.bing = true if 'bing' in afnd.v2.checked
       afnd.data.meta.article.reversed = true if 'reverse' in afnd.v2.checked
       if afnd.v2.url
-        afnd.data.availability.push({type: 'article', url: afnd.v2.url})
+        afnd.data.availability.push({type: 'article', url: (if _.isArray(afnd.v2.url) then afnd.v2.url[0] else afnd.v2.url)})
     try
       if afnd.data.availability.length is 0 and (afnd.v2.metadata.doi or afnd.v2.metadata.title or afnd.v2.metadata.url)
         eq = {type: 'article'}
@@ -337,6 +337,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
           _get metadata, catalogued.metadata
           res.cached = true # no need for further finding if we have the url and all necessary metadata
           res.url = catalogued.url
+          res.url = res.url[0] if _.isArray res.url
         else if catalogued.createdAt > Date.now() - res.refresh*86400000
           _get metadata, catalogued.metadata # it is in the catalogue but we don't have a link for it, and it is within refresh days old, so re-use the metadata from it
           res.cached = true # and cause an immediate return, we don't bother looking for everything again if we already couldn't find it within a given refresh window
@@ -521,6 +522,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
 
   # update or create a catalogue record
   if JSON.stringify(metadata) isnt '{}' and res.test isnt true
+    res.url = res.url[0] if _.isArray res.url
     if catalogued?
       upd = {}
       upd.url = res.url if res.url? and res.url isnt catalogued.url
