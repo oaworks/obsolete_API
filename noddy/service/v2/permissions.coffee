@@ -72,8 +72,9 @@ API.service.oab.permissions = (meta={}, file, url, confirmed, uid) ->
   if meta.doi? and not perms.ricks?
     try
       # https://rickscafe-api.herokuapp.com/permissions/doi/
-      cached = API.http.cache meta.doi, 'ricks_permissions'
-      if cached and typeof cached is 'object' and cached.application?
+      #cached = API.http.cache meta.doi, 'ricks_permissions'
+      # permissions caching disabled for now
+      if false #cached and typeof cached is 'object' and cached.application?
         perms.ricks = cached
         API.log 'Permissions check found in Ricks cache for ' + meta.doi
     if not perms.ricks?

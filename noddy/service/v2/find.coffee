@@ -330,7 +330,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       delete catalogued.url if _.isArray catalogued.url
       delete catalogued.metadata.url if _.isArray catalogued.metadata?.url
     if catalogued? and res.refresh isnt 0
-      res.permissions ?= catalogued.permissions if catalogued.permissions?.permissions? and not catalogued.permissions?.error? and (catalogued.metadata?.journal? or catalogued.metadata?.issn?)
+      #res.permissions ?= catalogued.permissions if catalogued.permissions?.permissions? and not catalogued.permissions?.error? and (catalogued.metadata?.journal? or catalogued.metadata?.issn?)
       if 'oabutton' in res.sources
         res.checked.push('oabutton') if 'oabutton' not in res.checked
         if catalogued.url? # within or without refresh time, if we have already found it, re-use it

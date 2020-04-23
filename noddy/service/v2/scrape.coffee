@@ -67,6 +67,9 @@ API.service.oab.scrape = (url, content, doi) ->
           meta.doi = d.matches[n].result[1]
           meta.doi = meta.doi.substring(0,meta.doi.length-1) if meta.doi.endsWith('.')
 
+  if meta.doi
+    meta.doi = meta.doi.split(' ')[0] # catch some spacing issues that sometimes come through
+    
   if content and not meta.title
     content = content.toLowerCase()
     if content.indexOf('requestdisplaytitle') isnt -1
