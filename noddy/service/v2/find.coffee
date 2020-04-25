@@ -186,16 +186,13 @@ API.service.oab.find = (options={}, metadata={}, content) ->
           if crs.doi and crs.title? and crs.title.length <= metadata.title.length*1.2 and crs.title.length >= metadata.title.length*.8 and metadata.title.toLowerCase().replace(/ /g,'').indexOf(crs.title.toLowerCase().replace(' ','').replace(' ','').replace(' ','').split(' ')[0]) isnt -1
             crs = check
       _get metadata, crs
-      if metadata.url? and metadata.licence? and metadata.licence.indexOf('creativecommons') isnt -1
-        res.url = metadata.url
-        res.found.crossref = res.url
+      res.found.crossref = res.url if crs?.url? and crs.licence? and crs.licence.indexOf('creativecommons') isnt -1
   _get_formatted_europepmc = () ->
     if (not _got() or (res.find and not res.url)) and 'epmc' in res.sources and (metadata.doi or metadata.pmid or metadata.pmcid or metadata.title)      
       res.checked.push('epmc') if 'epmc' not in res.checked
-      _get metadata, (if metadata.doi then API.use.europepmc.doi(metadata.doi) else if metadata.title then API.use.europepmc.title(metadata.title) else if metadata.pmid then API.use.europepmc.pmid(metadata.pmid) else API.use.europepmc.pmc metadata.pmcid)
-      if metadata.url
-        res.url = metadata.url
-        res.found.epmc = res.url
+      ec = (if metadata.doi then API.use.europepmc.doi(metadata.doi) else if metadata.title then API.use.europepmc.title(metadata.title) else if metadata.pmid then API.use.europepmc.pmid(metadata.pmid) else API.use.europepmc.pmc metadata.pmcid)
+      _get metadata, ec
+      res.found.epmc = ec.url if ec?.url
 
   if typeof options is 'string'
     metadata = options
