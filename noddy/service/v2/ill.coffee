@@ -162,9 +162,7 @@ API.service.oab.ill.subscription = (uid, meta={}, refresh=false) ->
           try
             #pg = HTTP.call('GET', url, {timeout:15000, npmRequestOptions:{proxy:API.settings.proxy}}).content
             pg = if url.indexOf('.xml.serialssolutions') isnt -1 or url.indexOf('sfx.response_type=simplexml') isnt -1 then HTTP.call('GET',url).content else API.http.puppeteer url #, undefined, API.settings.proxy
-            console.log pg
             spg = if pg.indexOf('<body') isnt -1 then pg.toLowerCase().split('<body')[1].split('</body')[0] else pg
-            console.log spg
             res.contents.push spg
           catch err
             console.log(err) if API.settings.log?.level is 'debug'

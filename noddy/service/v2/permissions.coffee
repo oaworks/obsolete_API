@@ -84,7 +84,7 @@ API.service.oab.permissions = (meta={}, file, url, confirmed, uid) ->
       API.log 'Permissions check connecting to Ricks for ' + ru
       try
         perms.ricks = HTTP.call('GET',ru).data.authoritative_permission
-        try API.http.cache(meta.doi, 'ricks_permissions', perms.ricks) if perms.ricks?.application?
+        #try API.http.cache(meta.doi, 'ricks_permissions', perms.ricks) if perms.ricks?.application?
       catch
         API.log 'Permissions check connection to Ricks failed for ' + meta.doi
         perms.error = 'Could not connect to Ricks'

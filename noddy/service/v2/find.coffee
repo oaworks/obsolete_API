@@ -169,25 +169,30 @@ API.service.oab.find = (options={}, metadata={}, content) ->
 
   _get_formatted_crossref = () ->
     mts = metadata.title? and metadata.title.length > 8 and metadata.title.split(' ').length > 2
-    if (not _got() or (res.find and not res.url)) and 'crossref' in res.sources and (metadata.doi or mts)
-      res.checked.push('crossref') if 'crossref' not in res.checked
-      res.checked.push('reverse') if 'reverse' not in res.checked and mts and not metadata.doi and 'reverse' in res.sources
-      try
-        crs = API.use.crossref.works.format undefined, metadata, ('reverse' in res.sources and not options.reversed)
-        if not crs.crossref_type and metadata.doi?
+    if (not _got() or (res.find and not res.url)) and ('crossref' in res.sources or 'reverse' in res.source)
+      crs = {}
+      if metadata.doi? and 'crossref' in res.sources
+        res.checked.push('crossref') if 'crossref' not in res.checked
+        crs = API.use.crossref.works.doi metadata.doi, true
+        if not crs.crossref_type
           res.doi_not_in_crossref = metadata.doi
-          delete options.url if options.url.indexOf('doi.org/' + metadata.doi) isnt -1
+          delete options.url if typeof options.url is 'string' and options.url.indexOf('doi.org/' + metadata.doi) isnt -1
           delete metadata.doi
           delete options.doi # don't allow the user-provided data to later override if we can't validate it on crossref
-        else
-          _get metadata, crs
-      if metadata.licence? and metadata.licence.indexOf('creativecommons') isnt -1
-        res.url = 'https://doi.org/' + metadata.doi
+      else if not options.reversed and 'reverse' in res.sources and metadata.title? and metadata.title.length > 8 and metadata.title.split(' ').length > 2
+        res.checked.push('reverse') if 'reverse' not in res.checked
+        try
+          check = API.use.crossref.reverse metadata.title, undefined, true
+          if crs.doi and crs.title? and crs.title.length <= metadata.title.length*1.2 and crs.title.length >= metadata.title.length*.8 and metadata.title.toLowerCase().replace(/ /g,'').indexOf(crs.title.toLowerCase().replace(' ','').replace(' ','').replace(' ','').split(' ')[0]) isnt -1
+            crs = check
+      _get metadata, crs
+      if metadata.url? and metadata.licence? and metadata.licence.indexOf('creativecommons') isnt -1
+        res.url = metadata.url
         res.found.crossref = res.url
   _get_formatted_europepmc = () ->
     if (not _got() or (res.find and not res.url)) and 'epmc' in res.sources and (metadata.doi or metadata.pmid or metadata.pmcid or metadata.title)      
       res.checked.push('epmc') if 'epmc' not in res.checked
-      _get metadata, API.use.europepmc.format undefined, metadata
+      _get metadata, (if metadata.doi then API.use.europepmc.doi(metadata.doi) else if metadata.title then API.use.europepmc.title(metadata.title) else if metadata.pmid then API.use.europepmc.pmid(metadata.pmid) else API.use.europepmc.pmc metadata.pmcid)
       if metadata.url
         res.url = metadata.url
         res.found.epmc = res.url
@@ -499,7 +504,9 @@ API.service.oab.find = (options={}, metadata={}, content) ->
     catch
       delete metadata.year
   metadata.year = metadata.year.toString() if typeof metadata.year is 'number'
-      
+
+  metadata.title = metadata.title.replace(/\s\s+/g,' ').trim() if typeof metadata.title is 'string'
+
   # remove authors if only present as strings (end users may provide them this way which causes problems in saving and re-using them
   # and author strings are not much use for discovering articles anyway
   if metadata.author?
@@ -515,8 +522,8 @@ API.service.oab.find = (options={}, metadata={}, content) ->
   metadata.url.push(options.url) if typeof options.url is 'string' and options.url not in metadata.url
   metadata.url.push(res.url) if typeof res.url is 'string' and res.url not in metadata.url
   res.permissions ?= API.service.oab.permissions(metadata,undefined,undefined,undefined,options.from) if options.permissions and metadata.doi
-  try
-    res.test = true if JSON.stringify(metadata).toLowerCase().replace(/'/g,' ').replace(/"/g,' ').indexOf(' test ') isnt -1 #or (options.embedded? and options.embedded.indexOf('openaccessbutton.org') isnt -1)
+  #try # as suspected this is far too loose and makes things tests that should not be, then causing them to fail on deposits. Review this at later date if still necessary
+  #  res.test = true if JSON.stringify(metadata).toLowerCase().replace(/'/g,' ').replace(/"/g,' ').indexOf(' test ') isnt -1 #or (options.embedded? and options.embedded.indexOf('openaccessbutton.org') isnt -1)
   res.metadata = metadata
   
 
