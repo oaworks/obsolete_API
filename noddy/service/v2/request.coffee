@@ -196,6 +196,7 @@ API.service.oab.request = (req,uacc,fast,notify=true) ->
     dom = req.dom
     delete req.dom
   return false if JSON.stringify(req).indexOf('<script') isnt -1
+  req = API.tdm.clean req
   req.type ?= 'article'
   req.url = req.url[0] if _.isArray req.url
   req.doi = req.url if not req.doi? and req.url? and req.url.indexOf('10.') isnt -1 and req.url.split('10.')[1].indexOf('/') isnt -1

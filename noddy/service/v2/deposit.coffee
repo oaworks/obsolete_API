@@ -26,6 +26,13 @@ _deposits = (params,uid,deposited,csv) ->
   re = []
   for r in res.hits.hits
     dr = r._source
+    if csv and dr.metadata?.reference?
+      delete dr.metadata.reference
+    if csv and dr.error
+      try
+        dr.error = dr.error.split(':')[0].split('{')[0].trim()
+      catch
+        delete dr.error
     if csv and dr.metadata?.author?
       for a of dr.metadata.author
         dr.metadata.author[a] = if dr.metadata.author[a].name then dr.metadata.author[a].name else if dr.metadata.author[a].given and dr.metadata.author[a].family then dr.metadata.author[a].given + ' ' + dr.metadata.author[a].family else ''
@@ -41,7 +48,7 @@ _deposits = (params,uid,deposited,csv) ->
               break
         if not already
           for f in fields
-            if f not in ['metadata.doi','metadata.title','deposit.type','deposit.createdAt']
+            if f not in ['metadata.doi','metadata.title','deposit.type','deposit.createdAt','metadata.reference']
               if f is 'deposit'
                 red[f] = d
               else
@@ -129,6 +136,7 @@ API.add 'service/oab/receive/:rid/:holdrefuse',
 
 
 API.service.oab.deposit = (d,options={},files,uid) ->
+  options = API.tdm.clean options
   if (options.doi? and options.doi.indexOf('10.1234/oab-syp-') is 0) or (options.metadata?.doi? and options.metadata.doi.indexOf('10.1234/oab-syp-') is 0)
     dm = {demo: true}
     dm.zenodo = {url: 'https://zenodo.org/record/DEMO'} if options.metadata?.doi is '10.1234/oab-syp-aam' or options.doi is '10.1234/oab-syp-aam' # without this the UI will treat it as if a wrong version was given
@@ -176,7 +184,7 @@ API.service.oab.deposit = (d,options={},files,uid) ->
           try at.affiliation = a.affiliation.name if typeof a.affiliation is 'object' and a.affiliation.name?
           creators.push at 
     creators = [{name:'Unknown'}] if creators.length is 0
-    description = if d.metadata.abstract then d.metadata.abstract + ' ' else ''
+    description = if d.metadata.abstract then d.metadata.abstract + '<br><br>' else ''
     description += perms.permissions.required_statement ? (if d.metadata.doi? then 'The publisher\'s final version of this work can be found at https://doi.org/' + d.metadata.doi else '')
     description = description.trim()
     description += '.' if description.lastIndexOf('.') isnt description.length-1

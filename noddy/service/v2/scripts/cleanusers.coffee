@@ -3,7 +3,7 @@
   get: 
     #roleRequired: 'root'
     action: () ->
-      dev = if this.queryParams.live is 'true' then false else true
+      dev = if this.queryParams.live is true then false else true
       action = if this.queryParams.action? then true else false
       processed = 0
       fixed = 0

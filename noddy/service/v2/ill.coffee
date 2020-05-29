@@ -35,6 +35,7 @@ API.add 'service/oab/ill',
       if this.user
         opts.from = this.user._id
         opts.api = true
+      opts = API.tdm.clean opts
       return API.service.oab.ill.start opts
 
 API.add 'service/oab/ill/collect/:sid',
@@ -60,6 +61,7 @@ API.add 'service/oab/ill/openurl',
       if not opts.uid and not this.user?
         return 404
       else
+        opts = API.tdm.clean opts
         return API.service.oab.ill.openurl opts.uid ? this.user._id, opts
 
 API.add 'service/oab/ill/config',
@@ -80,6 +82,7 @@ API.add 'service/oab/ill/config',
         delete opts.uid
       else
         user = this.user
+      opts = API.tdm.clean opts
       return API.service.oab.ill.config user, opts
 
 API.add 'service/oab/ills',
@@ -305,6 +308,7 @@ API.service.oab.ill.subscription = (uid, meta={}, refresh=false) ->
   return res
 
 API.service.oab.ill.start = (opts={}) ->
+  console.log opts
   # opts should include a key called metadata at this point containing all metadata known about the object
   # but if not, and if needed for the below stages, it is looked up again
   opts.metadata ?= {}
@@ -389,6 +393,8 @@ API.service.oab.ill.start = (opts={}) ->
 
       if not opts.forwarded
         API.service.oab.mail({vars: vars, template: {filename:'instantill_create.html'}, to: eml, from: "InstantILL <InstantILL@openaccessbutton.org>", subject: "ILL request " + vars.illid})
+      
+      console.log vars
       
       # send msg to mark and joe for testing (can be removed later)
       txt = vars.details
@@ -508,7 +514,7 @@ API.service.oab.ill.openurl = (uid, meta={}, withoutbase=false) ->
             v = meta.author.family + if meta.author.given then ', ' + meta.author.given else ''
           else
             v = JSON.stringify meta.author
-    else if k in ['doi','pmid','pmc','pmcid','url','journal','title','year','issn','volume','issue','page','crossref_type','publisher','published']
+    else if k in ['doi','pmid','pmc','pmcid','url','journal','title','year','issn','volume','issue','page','crossref_type','publisher','published','notes']
       v = meta[k]
     if v
       url += (if config[k] then config[k] else k) + '=' + encodeURIComponent(v) + '&'
@@ -518,7 +524,7 @@ API.service.oab.ill.openurl = (uid, meta={}, withoutbase=false) ->
     if url.indexOf(nfield+'=') is -1
       url += '&' + nfield + '=The user provided some metadata.'
     else
-      url.replace(nfield+'=',nfield+'=The user provided some metadata. ')
+      url = url.replace(nfield+'=',nfield+'=The user provided some metadata. ')
   return url.replace('/&&/g','&')
 
 API.service.oab.ill.terms = (uid) ->

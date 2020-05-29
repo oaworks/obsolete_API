@@ -82,6 +82,7 @@ API.add 'service/oab/bug',
       text = ''
       for k of this.request.body
         text += k + ': ' + JSON.stringify(this.request.body[k],undefined,2) + '\n\n'
+      text = API.tdm.clean text
       subject = '[OAB forms]'
       if this.request.body?.form is 'uninstall' # wrong bug general other
         subject += ' Uninstall notice'
@@ -307,9 +308,12 @@ API.service.oab.blacklist = (url,stale=360000) ->
   blacklist = []
   blacklist.push(i.url) for i in bl
   if url
-    for b in blacklist
-      return true if url.indexOf(b) isnt -1
-    return false
+    if url.indexOf('http') isnt 0 and url.indexOf(' ') isnt -1
+      return false # sometimes article titles get sent here, no point checking them on the blacklist
+    else
+      for b in blacklist
+        return true if url.indexOf(b) isnt -1
+      return false
   else
     return blacklist
 
