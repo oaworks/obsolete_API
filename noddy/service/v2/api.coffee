@@ -10,6 +10,7 @@ API.service.oab ?= {}
 @oab_request = new API.collection {index:"oab",type:"request",history:true}
 @oab_find = new API.collection {index:"oab",type:"find"}
 @oab_ill = new API.collection {index:"oab",type:"ill"}
+@oab_permissions = new API.collection {index:"oab",type:"permissions"}
 @oab_dnr = new API.collection {index:"oab",type:"oab_dnr"}
 
 
@@ -39,8 +40,8 @@ API.add 'service/oab/validate',
   post: 
     authOptional:true
     action: () ->
-      if (this.queryParams.uid or this.userId) and API.accounts.retrieve(this.queryParams.uid ? this.userId)
-        return API.service.oab.validate this.queryParams.email, this.queryParams.domained
+      if this.queryParams.email and (this.queryParams.uid or this.userId) #and (this.queryParams.uid is 'anonymous' or API.accounts.retrieve(this.queryParams.uid ? this.userId))
+        return API.service.oab.validate this.queryParams.email, this.queryParams.domained, this.queryParams.verify
       else
         return undefined
 
@@ -96,7 +97,7 @@ API.add 'service/oab/bug',
         subject += ' Other'
       subject += ' ' + Date.now()
       try
-        if this.request.body?.form is 'wrong'
+        if this.request.body?.form in ['wrong','uninstall']
           whoto.push 'requests@openaccessbutton.org'
       API.mail.send {
         service: 'openaccessbutton',
@@ -353,13 +354,13 @@ API.service.oab.template = (template,refresh) ->
   else
     return API.mail.template {service:'openaccessbutton'}
 
-API.service.oab.validate = (email, domain) ->
+API.service.oab.validate = (email, domain, verify=true) ->
   bad = ['eric@talkwithcustomer.com']
   if typeof email isnt 'string' or email.indexOf(',') isnt -1 or email in bad
     return false
   else
     v = API.mail.validate email, API.settings.service.openaccessbutton.mail.pubkey
-    if v.is_valid
+    if v.is_valid and (not verify or v.mailbox_verification in [true,'true'])
       if false #domain and domain not in ['qZooaHWRz9NLFNcgR','eZwJ83xp3oZDaec86'] # turning this off for now
         iacc = API.accounts.retrieve domain
         return 'baddomain' if not iacc?

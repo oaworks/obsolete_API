@@ -33,7 +33,7 @@ API.add 'service/oab/ill',
       for o of this.queryParams
         opts[o] = this.queryParams[o]
       if this.user
-        opts.from = this.user._id
+        opts.from ?= this.userId
         opts.api = true
       opts = API.tdm.clean opts
       return API.service.oab.ill.start opts
@@ -49,27 +49,38 @@ API.add 'service/oab/ill/collect/:sid',
 
 API.add 'service/oab/ill/openurl',
   get: () ->
-    return 'Will eventually redirect after reading openurl params passed here, somehow. For now a POST of metadata here by a user with an open ulr registered will build their openurl'
+    return 'Will eventually redirect after reading openurl params passed here, somehow. For now a POST of metadata here by a user with an open url registered will build their openurl'
   post:
-    #roleRequired: 'openaccessbutton.user'
     authOptional: true
     action: () ->
       opts = this.request.body ? {}
       for o of this.queryParams
         opts[o] = this.queryParams[o]
-      #delete opts.uid if opts.uid and not API.accounts.auth 'openaccessbutton.admin', this.user
+      if opts.config?
+        opts.uid ?= opts.config
+        delete opts.config
+      if opts.metadata?
+        for m of opts.metadata
+          opts[m] ?= opts.metadata[m]
+        delete opts.metadata
       if not opts.uid and not this.user?
         return 404
       else
         opts = API.tdm.clean opts
-        return API.service.oab.ill.openurl opts.uid ? this.user._id, opts
+        return API.service.oab.ill.openurl opts.uid ? this.userId, opts
+
+API.add 'service/oab/ill/url', 
+  get: 
+    authOptional: true
+    action: () -> 
+      return API.service.oab.ill.url this.queryParams.uid ? this.userId
 
 API.add 'service/oab/ill/config',
   get: 
     authOptional: true
     action: () ->
       try
-        return API.service.oab.ill.config this.queryParams.uid ? this.user._id
+        return API.service.oab.ill.config this.queryParams.uid ? this.userId ? this.queryParams.url
       return 404
   post: 
     authRequired: 'openaccessbutton.user'
@@ -104,24 +115,24 @@ API.add 'service/oab/ills',
 API.service.oab.ill = {}
 
 API.service.oab.ill.subscription = (uid, meta={}, refresh=false) ->
-  # dev and live demo accounts that always return a fixed answer
-  if (meta.doi is '10.1234/567890' or meta.title is 'Engineering a Powerfully Simple Interlibrary Loan Experience with InstantILL') and (uid is 'qZooaHWRz9NLFNcgR' or uid is 'eZwJ83xp3oZDaec86')
-    return {findings:{}, uid: uid, lookups:[], error:[], url: 'https://scholarworks.iupui.edu/bitstream/handle/1805/20422/07-PAXTON.pdf?sequence=1&isAllowed=y', demo: true}
-
   do_serialssolutions_xml = true
   do_sfx_xml = true
-  sig = uid + JSON.stringify(meta) + do_serialssolutions_xml + do_sfx_xml
-  sig = crypto.createHash('md5').update(sig, 'utf8').digest('base64')
-  res = API.http.cache(sig, 'oab_ill_subs', undefined, refresh) if refresh and refresh isnt true and refresh isnt 0
+  if typeof uid is 'string'
+    sig = uid + JSON.stringify(meta) + do_serialssolutions_xml + do_sfx_xml
+    sig = crypto.createHash('md5').update(sig, 'utf8').digest('base64')
+    res = API.http.cache(sig, 'oab_ill_subs', undefined, refresh) if refresh and refresh isnt true and refresh isnt 0
   if not res?
-    res = {findings:{}, uid: uid, lookups:[], error:[]}
-    res.contents = []
-    user = API.accounts.retrieve uid
-    if user?.service?.openaccessbutton?.ill?.config?.subscription?
-      config = user.service.openaccessbutton.ill.config
+    res = {findings:{}, lookups:[], error:[], contents: []}
+    if typeof uid is 'string'
+      res.uid = uid 
+      user = API.accounts.retrieve uid
+      config = user?.service?.openaccessbutton?.ill?.config
+    else
+      config = uid
+    if config?.subscription?
       # need to get their subscriptions link from their config - and need to know how to build the query string for it
-      openurl = API.service.oab.ill.openurl uid, meta, true
-      openurl = openurl.replace(config.ill_redirect_params.replace('?',''),'') if config.ill_redirect_params
+      openurl = API.service.oab.ill.openurl config, meta, true
+      openurl = openurl.replace(config.ill_added_params.replace('?',''),'') if config.ill_added_params
       openurl = openurl.split('?')[1] if openurl.indexOf('?') isnt -1
       if typeof config.subscription is 'string'
         config.subscription = config.subscription.split(',')
@@ -300,15 +311,13 @@ API.service.oab.ill.subscription = (uid, meta={}, refresh=false) ->
                 catch
                   res.error.push 'serialssolutions' if error
 
-    API.http.cache(sig, 'oab_ill_subs', res) if not _.isEmpty res.findings
-    
+    API.http.cache(sig, 'oab_ill_subs', res) if res.uid and not _.isEmpty res.findings
   # return cached or empty result if nothing else found
   else
     res.cache = true
   return res
 
 API.service.oab.ill.start = (opts={}) ->
-  console.log opts
   # opts should include a key called metadata at this point containing all metadata known about the object
   # but if not, and if needed for the below stages, it is looked up again
   opts.metadata ?= {}
@@ -320,7 +329,7 @@ API.service.oab.ill.start = (opts={}) ->
     # TODO for now we are just going to send an email when a user creates an ILL
     # until we have a script endpoint at the library to hit
     # library POST URL: https://www.imperial.ac.uk/library/dynamic/oabutton/oabutton3.php
-    if not opts.forwarded
+    if not opts.forwarded and not opts.resolved
       API.mail.send {
         service: 'openaccessbutton',
         from: 'requests@openaccessbutton.org',
@@ -332,11 +341,12 @@ API.service.oab.ill.start = (opts={}) ->
       HTTP.call('POST','https://www.imperial.ac.uk/library/dynamic/oabutton/oabutton3.php',{data:opts})
     return oab_ill.insert opts
 
-  else if opts.from?
-    user = API.accounts.retrieve opts.from
-    if user?
+  else if opts.from? or opts.config?
+    user = API.accounts.retrieve(opts.from) if opts.from isnt 'anonymous'
+    if user? or opts.config?
+      config = opts.config ? user?.service?.openaccessbutton?.ill?.config ? {}
       vars = {}
-      vars.name = user.profile?.firstname ? 'librarian'
+      vars.name = user?.profile?.firstname ? 'librarian'
       vars.details = ''
       ordered = ['title','author','volume','issue','date','pages']
       for o of opts
@@ -369,33 +379,31 @@ API.service.oab.ill.start = (opts={}) ->
           else if ['started','ended','took'].indexOf(r) is -1
             vars.details += '<p>' + r + ':<br>' + opts[r] + '</p>'
         #vars.details += '<p>' + o + ':<br>' + opts[o] + '</p>'
-      opts.norequests = true if user.service?.openaccessbutton?.ill?.config?.norequests
+      opts.requests_off = true if config.requests_off
       delete opts.author if opts.author? # remove author metadata due to messy provisions causing save issues
       delete opts.metadata.author if opts.metadata?.author?
       vars.illid = oab_ill.insert opts
       vars.details += '<p>Open access button ILL ID:<br>' + vars.illid + '</p>';
-      eml = if user.service?.openaccessbutton?.ill?.config?.email and user.service?.openaccessbutton?.ill?.config?.email.length then user.service?.openaccessbutton?.ill?.config?.email else if user.email then user.email else user.emails[0].address
+      eml = if config.email and config.email.length then config.email else if user?.email then user?.email else if user?.emails? and user.emails.length then user.emails[0].address else false
 
       # such as https://ambslibrary.share.worldcat.org/wms/cmnd/nd/discover/items/search?ai0id=level3&ai0type=scope&offset=1&pageSize=10&si0in=in%3A&si0qs=0021-9231&si1in=au%3A&si1op=AND&si2in=kw%3A&si2op=AND&sortDirection=descending&sortKey=librarycount&applicationId=nd&requestType=search&searchType=advancedsearch&eventSource=df-advancedsearch
       # could be provided as: (unless other params are mandatory) 
       # https://ambslibrary.share.worldcat.org/wms/cmnd/nd/discover/items/search?si0qs=0021-9231
-      if user.service?.openaccessbutton?.ill?.config?.search and user.service.openaccessbutton.ill.config.search.length and (opts.issn or opts.journal)
-        if user.service.openaccessbutton.ill.config.search.indexOf('worldcat') isnt -1
-          su = user.service.openaccessbutton.ill.config.search.split('?')[0] + '?ai0id=level3&ai0type=scope&offset=1&pageSize=10&si0in='
+      if config.search and config.search.length and (opts.issn or opts.journal)
+        if config.search.indexOf('worldcat') isnt -1
+          su = config.search.split('?')[0] + '?ai0id=level3&ai0type=scope&offset=1&pageSize=10&si0in='
           su += if opts.issn? then 'in%3A' else 'ti%3A'
           su += '&si0qs=' + (opts.issn ? opts.journal)
           su += '&sortDirection=descending&sortKey=librarycount&applicationId=nd&requestType=search&searchType=advancedsearch&eventSource=df-advancedsearch'
         else
-          su = user.service.openaccessbutton.ill.config.search
+          su = config.search
           su += if opts.issn then opts.issn else opts.journal
         vars.details += '<p>Search URL:<br><a href="' + su + '">' + su + '</a></p>'
         vars.worldcatsearchurl = su
 
-      if not opts.forwarded
+      if not opts.forwarded and not opts.resolved and eml
         API.service.oab.mail({vars: vars, template: {filename:'instantill_create.html'}, to: eml, from: "InstantILL <InstantILL@openaccessbutton.org>", subject: "ILL request " + vars.illid})
-      
-      console.log vars
-      
+
       # send msg to mark and joe for testing (can be removed later)
       txt = vars.details
       delete vars.details
@@ -421,38 +429,46 @@ API.service.oab.ill.config = (user, config) ->
   # https://ill.ulib.iupui.edu/ILLiad/IUP/illiad.dll?Action=10&Form=30&sid=OABILL&genre=InstantILL&aulast=Sapon-Shevin&aufirst=Mara&issn=10478248&title=Journal+of+Educational+Foundations&atitle=Cooperative+Learning%3A+Liberatory+Praxis+or+Hamburger+Helper&volume=5&part=&issue=3&spage=5&epage=&date=1991-07-01&pmid
   # and their openurl config https://docs.google.com/spreadsheets/d/1wGQp7MofLh40JJK32Rp9di7pEkbwOpQ0ioigbqsufU0/edit#gid=806496802
   # tested it and set values as below defaults, but also noted that it has year and month boxes, but these do not correspond to year and month params, or date params
-  user = Users.get(user) if typeof user is 'string'
-  if config?
-    uc = user.service?.openaccessbutton?.ill?.config ? {}
-    update = {}
-    for k in ['ill_institution','ill_redirect_base_url','ill_redirect_params','method','sid','title','doi','pmid','pmcid','author','journal','issn','volume','issue','page','published','year','notes','terms','book','other','cost','time','email','problem_email','viewaccount','subscription','subscription_type','val','search','autorun','autorunparams','intropara','norequests','illinfo','noillifoa','noillifsub','saypaper','pilot','live','advancedform']
-      if k is 'ill_redirect_base_url' and config[k]?
-        if config[k].indexOf('illiad.dll') isnt -1 and config[k].toLowerCase().indexOf('action=') is -1
-          config[k] = config[k].split('?')[0]
-          if config[k].indexOf('/openurl') is -1
-            config[k] = config[k].split('#')[0] + '/openurl'
-            config[k] += if config[k].indexOf('#') is -1 then '' else '#' + config[k].split('#')[1].split('?')[0]
-          config[k] += '?genre=article'
-        else if config[k].indexOf('relais') isnt -1 and config[k].toLowerCase().indexOf('genre=') is -1
-          config[k] = config[k].split('?')[0]
-          config[k] += '?genre=article'
-      if k in ['pilot','live']
-        update[k] = Date.now() if config[k] is true and (not uc[k] or uc[k] is '$DELETE')
-      else
-        update[k] = config[k] if config[k]?
-    jsu = JSON.stringify(update)
-    if jsu isnt '{}' and jsu.indexOf('<script') is -1
-      if not user.service.openaccessbutton.ill?
-        Users.update user._id, {'service.openaccessbutton.ill': {config: update}}
-      else
-        Users.update user._id, {'service.openaccessbutton.ill.config': update}
-      user = Users.get user._id
-  try
-    rs = user.service.openaccessbutton.ill.config ? {}
-    try rs.adminemail = if user.email then user.email else user.emails[0].address
-    return rs
-  catch
-    return {}
+  if typeof user is 'string' and user.indexOf('.') isnt -1 # user is actually url where an embed has been called from
+    try
+      res = oab_find.search 'plugin.exact:instantill AND config:* AND embedded:"' + user.split('?')[0].split('#')[0] + '"'
+      return JSON.parse res.hits.hits[0]._source.config
+    catch
+      return {}
+  else
+    user = Users.get(user) if typeof user is 'string'
+    if typeof user is 'object' and config?
+      # ['institution','ill_form','ill_added_params','method','sid','title','doi','pmid','pmcid','author','journal','issn','volume','issue','page','published','year','notes','terms','book','other','cost','time','email','problem','account','subscription','subscription_type','val','search','autorun_off','autorunparams','intro_off','requests_off','ill_info','ill_if_oa_off','ill_if_sub_off','say_paper','pilot','live','advanced_ill_form']
+      config.pilot = Date.now() if config.pilot is true
+      config.live = Date.now() if config.live is true
+      if typeof config.ill_form is 'string'
+        if config.ill_form.indexOf('illiad.dll') isnt -1 and config.ill_form.toLowerCase().indexOf('action=') is -1
+          config.ill_form = config.ill_form.split('?')[0]
+          if config.ill_form.indexOf('/openurl') is -1
+            config.ill_form = config.ill_form.split('#')[0] + '/openurl'
+            config.ill_form += if config.ill_form.indexOf('#') is -1 then '' else '#' + config.ill_form.split('#')[1].split('?')[0]
+          config.ill_form += '?genre=article'
+        else if config.ill_form.indexOf('relais') isnt -1 and config.ill_form.toLowerCase().indexOf('genre=') is -1
+          config.ill_form = config.ill_form.split('?')[0]
+          config.ill_form += '?genre=article'
+      if JSON.stringify(config).indexOf('<script') is -1
+        if not user.service?
+          Users.update user._id, {service: {openaccessbutton: {ill: {config: config, had_old: false}}}}
+        else if not user.service.openaccessbutton?
+          Users.update user._id, {'service.openaccessbutton': {ill: {config: config, had_old: false}}}
+        else if not user.service.openaccessbutton.ill?
+          Users.update user._id, {'service.openaccessbutton.ill': {config: config, had_old: false}}
+        else
+          upd = {'service.openaccessbutton.ill.config': config}
+          if user.service.openaccessbutton.ill.config? and not user.service.openaccessbutton.ill.old_config? and user.service.openaccessbutton.ill.had_old isnt false
+            upd['service.openaccessbutton.ill.old_config'] = user.service.openaccessbutton.ill.config
+          Users.update user._id, upd
+    try
+      config ?= user.service.openaccessbutton.ill.config ? {}
+      try config.owner ?= if user.email then user.email else user.emails[0].address
+      return config
+    catch
+      return {}
 
 API.service.oab.ill.resolver = (user, resolve, config) ->
   # should configure and return link resolver settings for the given user
@@ -463,9 +479,9 @@ API.service.oab.ill.resolver = (user, resolve, config) ->
   return false
   
 API.service.oab.ill.openurl = (uid, meta={}, withoutbase=false) ->
-  config = API.service.oab.ill.config uid
+  config = if typeof uid is 'object' then uid else API.service.oab.ill.config uid
   config ?= {}
-  return '' if withoutbase isnt true and not config.ill_redirect_base_url
+  return '' if withoutbase isnt true and not config.ill_form
   # add iupui / openURL defaults to config
   defaults =
     sid: 'sid'
@@ -489,9 +505,9 @@ API.service.oab.ill.openurl = (uid, meta={}, withoutbase=false) ->
   for d of defaults
     config[d] = defaults[d] if not config[d]
 
-  url = if config.ill_redirect_base_url then config.ill_redirect_base_url else ''
+  url = if config.ill_form then config.ill_form else ''
   url += if url.indexOf('?') is -1 then '?' else '&'
-  url += config.ill_redirect_params.replace('?','') + '&' if config.ill_redirect_params
+  url += config.ill_added_params.replace('?','') + '&' if config.ill_added_params
   url += config.sid + '=InstantILL&'
   for k of meta
     v = false
@@ -527,8 +543,22 @@ API.service.oab.ill.openurl = (uid, meta={}, withoutbase=false) ->
       url = url.replace(nfield+'=',nfield+'=The user provided some metadata. ')
   return url.replace('/&&/g','&')
 
+API.service.oab.ill.url = (uid) ->
+  # given a uid, find the most recent URL that this users uid submitted an availability check with an ILL for
+  q = {size: 0, query: {filtered: {query: {bool: {must: [{term: {plugin: "instantill"}},{term: {"from.exact": uid}}]}}}}}
+  q.aggregations = {embeds: {terms: {field: "embedded.exact"}}}
+  res = oab_find.search q
+  for eu in res.aggregations.embeds.buckets
+    eur = eu.key.split('?')[0].split('#')[0]
+    if eur.indexOf('instantill.org') is -1 and eur.indexOf('openaccessbutton.org') is -1
+      return eur
+  return false
+
 API.service.oab.ill.terms = (uid) ->
-  return API.service.oab.ill.config(uid).terms
+  if typeof uid is 'object'
+    return uid.terms
+  else
+    return API.service.oab.ill.config(uid).terms
 
 API.service.oab.ill.progress = () ->
   # TODO need a function that can lookup ILL progress from the library systems some how

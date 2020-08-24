@@ -15,23 +15,14 @@ API.service.oab.permissions = (meta={}, file, url, confirmed, uid) ->
   # https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3206455
   # https://static.cottagelabs.com/obstm.pdf
 
-  # dev and live demo accounts that always return a fixed answer
-  if meta.doi? and meta.doi.indexOf('10.1234/oab-syp-') is 0 #and (meta.from is 'qZooaHWRz9NLFNcgR' or uid is 'eZwJ83xp3oZDaec86')
-    return {
-      demo: true,
-      permissions: {
-        archiving_allowed: if meta.doi is '10.1234/oab-syp-aam' then true else false,
-        version_allowed: if meta.doi is '10.1234/oab-syp-aam' then "postprint" else undefined
-      }
-      file: {
-        archivable: true, archivable_reason: "Demo acceptance", version: "postprint", licence: "cc-by", same_paper: true, name: "example.pdf", format: "pdf", checksum: "example-checksum"
-      }
-    }
+  inp = {}
+  if meta.metadata? # if passed a catalogue object
+    inp = meta
+    meta = meta.metadata
 
   formats = ['doc','tex','pdf','htm','xml','txt','rtf','odf','odt','page']
 
   perms = {permissions: {archiving_allowed: false, version_allowed: undefined, embargo: undefined, required_statement: undefined, licence_required: undefined}, file: undefined}
-  meta = meta.metadata if meta.metadata? # if passed a catalogue object
 
   if typeof file is 'string'
     file = data: file
@@ -79,8 +70,12 @@ API.service.oab.permissions = (meta={}, file, url, confirmed, uid) ->
         API.log 'Permissions check found in Ricks cache for ' + meta.doi
     if not perms.ricks?
       ru = 'https://api.greenoait.org/permissions/doi/' + meta.doi
-      if uid and uc = API.service.oab.deposit.config(uid)
-        ru += '?affiliation=' + uc.ROR_ID if uc.ROR_ID
+      if typeof uid is 'object'
+        uc = uid
+      else if uid
+        try uc = API.service.oab.deposit.config uid
+      if uc? and typeof uc is 'object' and uc.ror?
+        ru += '?affiliation=' + uc.ror if uc.ror
       API.log 'Permissions check connecting to Ricks for ' + ru
       try
         perms.ricks = HTTP.call('GET',ru).data.authoritative_permission

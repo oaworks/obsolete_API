@@ -87,7 +87,7 @@ API.add 'service/oab/deposit/config',
     authOptional: true
     action: () ->
       try
-        return API.service.oab.deposit.config this.queryParams.uid ? this.user._id
+        return API.service.oab.deposit.config this.queryParams.uid ? this.user._id ? this.queryParams.url
       return 404
   post:
     authRequired: 'openaccessbutton.user'
@@ -101,6 +101,14 @@ API.add 'service/oab/deposit/config',
       else
         user = this.user
       return API.service.oab.deposit.config user, opts
+
+API.add 'service/oab/deposit/url', 
+  get: 
+    authOptional: true
+    action: () -> 
+      return API.service.oab.deposit.url this.queryParams.uid ? this.userId
+
+
 
 # for legacy
 API.add 'service/oab/receive/:rid',
@@ -137,11 +145,6 @@ API.add 'service/oab/receive/:rid/:holdrefuse',
 
 API.service.oab.deposit = (d,options={},files,uid) ->
   options = API.tdm.clean options
-  if (options.doi? and options.doi.indexOf('10.1234/oab-syp-') is 0) or (options.metadata?.doi? and options.metadata.doi.indexOf('10.1234/oab-syp-') is 0)
-    dm = {demo: true}
-    dm.zenodo = {url: 'https://zenodo.org/record/DEMO'} if options.metadata?.doi is '10.1234/oab-syp-aam' or options.doi is '10.1234/oab-syp-aam' # without this the UI will treat it as if a wrong version was given
-    return dm
-
   if typeof d is 'string' # a catalogue ID
     d = oab_catalogue.get d
   else
@@ -155,22 +158,22 @@ API.service.oab.deposit = (d,options={},files,uid) ->
   dep = {createdAt: Date.now(), zenodo: {}}
   dep.created_date = moment(dep.createdAt, "x").format "YYYY-MM-DD HHmm.ss"
   dep.embedded = options.embedded if options.embedded
-  if typeof dep.embedded is 'string' and (dep.embedded.indexOf('setup') isnt -1 or dep.embedded.indexOf('demo') isnt -1) and (dep.embedded.indexOf('openaccessbutton.') isnt -1 or dep.embedded.indexOf('shareyourpaper.') isnt -1 or dep.embedded.indexOf('shareyourarticle.') isnt -1)
-    options.setup = true # allows us to catch setup uses, and not send them to zenodo and not save them to the catalogue
+  dep.demo = options.demo if options.demo
   dep.pilot = options.pilot if options.pilot
-  if typeof dep.pilot is 'boolean' # catch possible old erros with live/pilot values
-    dep.pilot = if dep.pilot is true then Date.now() else undefined
+  if typeof dep.pilot is 'boolean' or dep.pilot in ['true','false'] # catch possible old erros with live/pilot values
+    dep.pilot = if dep.pilot is true or dep.pilot is 'true' then Date.now() else undefined
   dep.live = options.live if options.live
-  if typeof dep.live is 'boolean'
-    dep.live = if dep.live is true then Date.now() else undefined
+  if typeof dep.live is 'boolean' or dep.live in ['true','false']
+    dep.live = if dep.live is true or dep.live is 'true' then Date.now() else undefined
   dep.name = (files[0].filename ? files[0].name) if files? and files.length
   dep.email = options.email if options.email
   dep.from = options.from if options.from
   dep.from ?= uid if uid
   dep.plugin = options.plugin if options.plugin
+  dep.confirmed = decodeURIComponent(options.confirmed) if options.confirmed
 
-  perms = API.service.oab.permissions d, files, undefined, options.confirmed # if confirmed is true the submitter has confirmed this is the right file. If confirmed is the checksum this is a resubmit by an admin
-  if perms.file?.archivable and ((options.confirmed? and options.confirmed is perms.file.checksum) or not options.confirmed) #or (options.confirmed and API.settings.dev)) # if the depositor confirms we don't deposit, we manually review - only deposit on admin confirmation (but on dev allow it)
+  perms = API.service.oab.permissions d, files, undefined, dep.confirmed # if confirmed is true the submitter has confirmed this is the right file. If confirmed is the checksum this is a resubmit by an admin
+  if perms.file?.archivable and ((dep.confirmed? and dep.confirmed is perms.file.checksum) or not dep.confirmed) #or (dep.confirmed and API.settings.dev)) # if the depositor confirms we don't deposit, we manually review - only deposit on admin confirmation (but on dev allow it)
     zn = {}
     zn.content = files[0].data
     zn.name = perms.file.name
@@ -202,7 +205,7 @@ API.service.oab.deposit = (d,options={},files,uid) ->
     meta.keywords = d.metadata.keyword if _.isArray(d.metadata.keyword) and d.metadata.keyword.length and typeof d.metadata.keyword[0] is 'string'
     if d.metadata.doi?
       in_zenodo = API.use.zenodo.records.doi d.metadata.doi
-      if in_zenodo and options.confirmed isnt perms.file.checksum and not API.settings.dev
+      if in_zenodo and dep.confirmed isnt perms.file.checksum and not API.settings.dev
         dep.zenodo.already = in_zenodo.id # we don't put it in again although we could with doi as related field - but leave for review for now
       else if in_zenodo
         meta['related_identifiers'] = [{relation: (if meta.version is 'postprint' or meta.version is 'AAM' or meta.version is 'preprint' then 'isPreviousVersionOf' else 'isIdenticalTo'), identifier: d.metadata.doi}]
@@ -228,18 +231,13 @@ API.service.oab.deposit = (d,options={},files,uid) ->
         uc.communities = [uc.communities] if typeof uc.communities is 'string'
         meta['communities'] = []
         meta.communities.push(if typeof com is 'string' then {identifier: com} else com) for com in uc.communities
-    tk = if API.settings.dev then API.settings.service.openaccessbutton?.zenodo?.sandbox else API.settings.service.openaccessbutton?.zenodo?.token
+    tk = if API.settings.dev or dep.demo then API.settings.service.openaccessbutton?.zenodo?.sandbox else API.settings.service.openaccessbutton?.zenodo?.token
     if tk
-      if options.setup
-        dep.zenodo.id = 'EXAMPLE'
-        dep.zenodo.url = 'https://' + (if API.settings.dev then 'sandbox.' else '') + 'zenodo.org/record/EXAMPLE'
-        dep.zenodo.doi = '10.1234/EXAMPLE' if meta.prereserve_doi
-        dep.zenodo.file = 'https://' + (if API.settings.dev then 'sandbox.' else '') + 'zenodo.org/files/EXAMPLE'
-      else if not dep.zenodo.already
+      if not dep.zenodo.already
         z = API.use.zenodo.deposition.create meta, zn, tk
         if z.id
           dep.zenodo.id = z.id
-          dep.zenodo.url = 'https://' + (if API.settings.dev then 'sandbox.' else '') + 'zenodo.org/record/' + z.id
+          dep.zenodo.url = 'https://' + (if API.settings.dev or dep.demo then 'sandbox.' else '') + 'zenodo.org/record/' + z.id
           dep.zenodo.doi = z.metadata.prereserve_doi.doi if z.metadata?.prereserve_doi?.doi?
           dep.zenodo.file = z.uploaded?.links?.download ? z.uploaded?.links?.download
         else
@@ -260,16 +258,17 @@ API.service.oab.deposit = (d,options={},files,uid) ->
     dep.type = 'review'
   d.deposit.push dep
   dd = {deposit: d.deposit, permissions: perms}
-  oab_catalogue.update(d._id, dd) if not options.setup?
+  oab_catalogue.update d._id, dd
 
   tos = API.settings.service.openaccessbutton.notify.deposit ? ['mark@cottagelabs.com','joe@righttoresearch.org','natalianorori@gmail.com']
   bcc = undefined
   if dep.type isnt 'review'
     bcc = tos
     tos = []
-  if options.from
-    iacc = API.accounts.retrieve options.from
-    tos.push iacc.email ? iacc.emails[0].address # the institutional user may set a config value to use as the contact email address but for now it is the account address
+  if options.from and options.from isnt 'anonymous'
+    try
+      iacc = API.accounts.retrieve options.from
+      tos.push iacc.email ? iacc.emails[0].address # the institutional user may set a config value to use as the contact email address but for now it is the account address
 
   dep.permissions = perms
   dep.metadata = d.metadata
@@ -282,21 +281,23 @@ API.service.oab.deposit = (d,options={},files,uid) ->
       if author.family
         as.push (if author.given then author.given + ' ' else '') + author.family
     ed.metadata.author = as
-  ed.confirmed += encodeURIComponent(perms.file.checksum) if perms?.file?.checksum?
   ed.adminlink = (if ed.embedded then ed.embedded else 'https://shareyourpaper.org' + (if ed.metadata?.doi? then '/' + ed.metadata.doi else ''))
   ed.adminlink += if ed.adminlink.indexOf('?') is -1 then '?' else '&'
-  ed.adminlink += 'confirmed=' + encodeURIComponent(perms.file.checksum) + '&' if perms?.file?.checksum?
+  if perms?.file?.checksum?
+    ed.confirmed = encodeURIComponent perms.file.checksum
+    ed.adminlink += 'confirmed=' + ed.confirmed + '&'
   ed.adminlink += 'email=' + ed.email
   tmpl = API.mail.template dep.type + '_deposit.html'
   sub = API.service.oab.substitute tmpl.content, ed
   if perms.file?.archivable isnt false # so when true or when undefined if no file is given
-    API.service.oab.mail
+    ml =
       from: 'deposits@openaccessbutton.org'
       to: tos
-      bcc: bcc
       subject: (sub.subject ? dep.type + ' deposit')
       html: sub.content
-      attachments: (if _.isArray(files) and files.length then [{filename: (files[0].filename ? files[0].name), content: files[0].data}] else undefined)
+    ml.bcc = bcc if bcc? # passing undefined to mail seems to cause errors, so only set if definitely exists
+    ml.attachments = [{filename: (files[0].filename ? files[0].name), content: files[0].data}] if _.isArray(files) and files.length
+    API.service.oab.mail ml
 
   # eventually this could also close any open requests for the same item, but that has not been prioritised to be done yet
   dep.z = z if API.settings.dev and dep.zenodo.id? and dep.zenodo.id isnt 'EXAMPLE'
@@ -306,29 +307,50 @@ API.service.oab.deposit = (d,options={},files,uid) ->
   return dep
 
 API.service.oab.deposit.config = (user, config) ->
-  user = Users.get(user) if typeof user is 'string'
-  if typeof user is 'object' and config?
-    uc = user.service?.openaccessbutton?.ill?.config ? {}
-    update = {}
-    for k in ['depositdate','community','institution_name','repo_name','email_domains','deposit_terms','old_way','deposit_help','email_for_manual_review','file_review_time','if_no_doi_go_here','email_for_feedback','sayarticle','allow_oa_deposit','library_handles_dark_deposit_requests','dark_deposit_off','ROR_ID','high_performance','live','pilot','activate_try_it_and_learn_more','not_a_library']
-      if k in ['pilot','live']
-        update[k] = Date.now() if config[k] is true and not uc[k]
-      else
-        update[k] = config[k] if config[k]?
-        try update[k] = update[k].split('communities/')[1].split('/')[0] if k is 'community' and update[k].indexOf('/') isnt -1
-    jsu = JSON.stringify(update)
-    if jsu isnt '{}' and jsu.indexOf('<script') is -1
-      if not user.service.openaccessbutton.deposit?
-        Users.update user._id, {'service.openaccessbutton.deposit': {config: update}}
-      else
-        Users.update user._id, {'service.openaccessbutton.deposit.config': update}
-      user = Users.get user._id
-  try
-    rs = user.service.openaccessbutton.deposit?.config ? {}
-    try rs.adminemail = user.email ? user.emails[0].address
-    return rs
-  catch
-    return {}
+  if typeof user is 'string' and user.indexOf('.') isnt -1 # user is actually url where an embed has been called from
+    try
+      res = oab_find.search q
+      res = oab_find.search 'plugin.exact:shareyourpaper AND config:* AND embedded:"' + user.split('?')[0].split('#')[0] + '"'
+      return JSON.parse res.hits.hits[0]._source.config
+    catch
+      return {}
+  else
+    user = Users.get(user) if typeof user is 'string'
+    if typeof user is 'object' and config?
+      # ['depositdate','community','institution_name','repo_name','email_domains','terms','old_way','deposit_help','email_for_manual_review','file_review_time','if_no_doi_go_here','email_for_feedback','sayarticle','oa_deposit_off','library_handles_dark_deposit_requests','dark_deposit_off','ror','live','pilot','activate_try_it_and_learn_more','not_library']
+      config.pilot = Date.now() if config.pilot is true
+      config.live = Date.now() if config.live is true
+      try config.community = config.community.split('communities/')[1].split('/')[0] if typeof config.community is 'string' and config.community.indexOf('communities/') isnt -1
+      delete config.autorunparams if config.autorunparams is false
+      if JSON.stringify(config).indexOf('<script') is -1
+        if not user.service?
+          Users.update user._id, {service: {openaccessbutton: {deposit: {config: config, had_old: false}}}}
+        else if not user.service.openaccessbutton?
+          Users.update user._id, {'service.openaccessbutton': {deposit: {config: config, had_old: false}}}
+        else if not user.service.openaccessbutton.deposit?
+          Users.update user._id, {'service.openaccessbutton.deposit': {config: config, had_old: false}}
+        else
+          upd = {'service.openaccessbutton.deposit.config': config}
+          if user.service.openaccessbutton.deposit.config? and not user.service.openaccessbutton.deposit.old_config? and user.service.openaccessbutton.deposit.had_old isnt false
+            upd['service.openaccessbutton.deposit.old_config'] = user.service.openaccessbutton.deposit.config
+          Users.update user._id, upd
+    try
+      config ?= user.service.openaccessbutton.deposit?.config ? {}
+      try config.owner = user.email ? user.emails[0].address
+      return config
+    catch
+      return {}
+
+API.service.oab.deposit.url = (uid) ->
+  # given a uid, find the most recent URL that this users uid submitted a deposit for
+  q = {size: 0, query: {filtered: {query: {bool: {must: [{term: {plugin: "shareyourpaper"}},{term: {"from.exact": uid}}]}}}}}
+  q.aggregations = {embeds: {terms: {field: "embedded.exact"}}}
+  res = oab_find.search q
+  for eu in res.aggregations.embeds.buckets
+    eur = eu.key.split('?')[0].split('#')[0]
+    if eur.indexOf('shareyourpaper.org') is -1 and eur.indexOf('openaccessbutton.org') is -1
+      return eur
+  return false
 
 
 
