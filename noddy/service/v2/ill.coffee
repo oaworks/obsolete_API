@@ -345,6 +345,7 @@ API.service.oab.ill.start = (opts={}) ->
     user = API.accounts.retrieve(opts.from) if opts.from isnt 'anonymous'
     if user? or opts.config?
       config = opts.config ? user?.service?.openaccessbutton?.ill?.config ? {}
+      delete opts.config if opts.config?
       vars = {}
       vars.name = user?.profile?.firstname ? 'librarian'
       vars.details = ''

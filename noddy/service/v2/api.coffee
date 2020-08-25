@@ -358,6 +358,8 @@ API.service.oab.validate = (email, domain, verify=true) ->
   bad = ['eric@talkwithcustomer.com']
   if typeof email isnt 'string' or email.indexOf(',') isnt -1 or email in bad
     return false
+  else if email.indexOf('@openaccessbutton.org') isnt -1 or email.indexOf('@email.ghostinspector.com') isnt -1 #or email in []
+    return true
   else
     v = API.mail.validate email, API.settings.service.openaccessbutton.mail.pubkey
     if v.is_valid and (not verify or v.mailbox_verification in [true,'true'])
