@@ -334,7 +334,10 @@ API.service.oab.find = (options={}, metadata={}, content) ->
   
   catalogued = undefined # if we find the article already in our catalogue, use this to track and update it
 
-  API.log msg: 'OAB finding academic content', level: 'debug', metadata: JSON.stringify metadata
+  groups = ['oab']
+  groups.push(res.plugin) if options.plugin
+  groups.push(options.from) if options.from in ['illiad','clio']
+  API.log msg: 'OAB finding academic content', group: groups, level: 'debug', metadata: JSON.stringify metadata
 
   # prep complete ==============================================================
 

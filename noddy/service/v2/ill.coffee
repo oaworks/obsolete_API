@@ -324,7 +324,10 @@ API.service.oab.ill.start = (opts={}) ->
   meta = API.service.oab.metadata opts
   for m of meta
     opts.metadata[m] ?= meta[m]
-    
+
+  opts.pilot = Date.now() if opts.pilot is true
+  opts.live = Date.now() if opts.live is true
+
   if opts.library is 'imperial'
     # TODO for now we are just going to send an email when a user creates an ILL
     # until we have a script endpoint at the library to hit
