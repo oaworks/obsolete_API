@@ -2,9 +2,6 @@
 import Future from 'fibers/future'
 import unidecode from 'unidecode'
 
-#oab_find.remove '*'
-#oab_catalogue.remove '*'
-
 #Baker, T. S., Eisenberg, D., & Eiserling, F. (1977). Ribulose Bisphosphate Carboxylase: A Two-Layered, Square-Shaped Molecule of Symmetry 422. Science, 196(4287), 293-295. doi:10.1126/science.196.4287.293
 API.service.oab.citation = (citation) ->
   rs = if typeof citation is 'object' then citation else {}
@@ -74,6 +71,7 @@ _find =
       opts.email = this.user.emails[0].address
     opts.url = opts.url[0] if _.isArray opts.url
     if not opts.test and opts.url and API.service.oab.blacklist(opts.url) is true
+      opts.dom = 'redacted' if opts.dom
       API.log 'find request blacklisted for ' + JSON.stringify opts
       return 400
     else
@@ -110,6 +108,7 @@ _avail =
       opts.email = this.user.emails[0].address
     opts.url = opts.url[0] if _.isArray opts.url
     if not opts.test and opts.url and API.service.oab.blacklist(opts.url) is true
+      opts.dom = 'redacted' if opts.dom
       API.log 'find request blacklisted for ' + JSON.stringify opts
       return 400
     else
@@ -440,7 +439,9 @@ API.service.oab.find = (options={}, metadata={}, content) ->
     res.permissions ?= API.service.oab.permissions metadata, undefined, undefined, undefined, (options.config ? options.from)
 
   _get.ill = () ->
-    res.ill ?= {} # terms and openurl used to be set here, but now all done in embed
+    res.ill ?= {} # terms and openurl can be done client-side by new embed but old embed can't so keep these a while longer
+    try res.ill.terms = options.config?.terms ? API.service.oab.ill.terms options.from
+    try res.ill.openurl = API.service.oab.ill.openurl (options.config ? options.from), metadata
     try res.ill.subscription = API.service.oab.ill.subscription (options.config ? options.from), metadata, res.refresh
 
 
