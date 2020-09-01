@@ -130,6 +130,8 @@ API.service.oab.ill.subscription = (uid, meta={}, refresh=false) ->
     else
       config = uid
     if config?.subscription?
+      if config.ill_redirect_params
+        config.ill_added_params ?= config.ill_redirect_params
       # need to get their subscriptions link from their config - and need to know how to build the query string for it
       openurl = API.service.oab.ill.openurl config, meta, true
       openurl = openurl.replace(config.ill_added_params.replace('?',''),'') if config.ill_added_params
@@ -348,6 +350,8 @@ API.service.oab.ill.start = (opts={}) ->
     user = API.accounts.retrieve(opts.from) if opts.from isnt 'anonymous'
     if user? or opts.config?
       config = opts.config ? user?.service?.openaccessbutton?.ill?.config ? {}
+      if config.requests
+        config.requests_off ?= config.requests
       delete opts.config if opts.config?
       vars = {}
       vars.name = user?.profile?.firstname ? 'librarian'
@@ -442,6 +446,8 @@ API.service.oab.ill.config = (user, config) ->
   else
     user = Users.get(user) if typeof user is 'string'
     if typeof user is 'object' and config?
+      if config.ill_redirect_base_url
+        config.ill_form = config.ill_redirect_base_url
       # ['institution','ill_form','ill_added_params','method','sid','title','doi','pmid','pmcid','author','journal','issn','volume','issue','page','published','year','notes','terms','book','other','cost','time','email','problem','account','subscription','subscription_type','val','search','autorun_off','autorunparams','intro_off','requests_off','ill_info','ill_if_oa_off','ill_if_sub_off','say_paper','pilot','live','advanced_ill_form']
       config.pilot = Date.now() if config.pilot is true
       config.live = Date.now() if config.live is true
@@ -485,7 +491,11 @@ API.service.oab.ill.resolver = (user, resolve, config) ->
 API.service.oab.ill.openurl = (uid, meta={}, withoutbase=false) ->
   config = if typeof uid is 'object' then uid else API.service.oab.ill.config uid
   config ?= {}
-  return '' if withoutbase isnt true and not config.ill_form
+  if config.ill_redirect_base_url
+    config.ill_form ?= config.ill_redirect_base_url
+  if config.ill_redirect_params
+    config.ill_added_params ?= config.ill_redirect_params
+  return '' if withoutbase isnt true and not config.ill_form # support redirect base url for legacy config
   # add iupui / openURL defaults to config
   defaults =
     sid: 'sid'
