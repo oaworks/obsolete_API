@@ -101,7 +101,7 @@ API.add 'service/oab/bug',
           whoto.push 'requests@openaccessbutton.org'
       API.mail.send {
         service: 'openaccessbutton',
-        from: 'help@openaccessbutton.org',
+        from: 'donotreply@openaccessbutton.org',
         to: whoto,
         subject: subject,
         text: text
@@ -304,6 +304,7 @@ API.service.oab.stats = (tool) ->
 API.service.oab.blacklist = (url,stale=360000) ->
   API.log msg: 'Checking OAB blacklist', url: url
   stale = 0 if stale is false
+  url = url.toString() if typeof url is 'number'
   return false if url? and (url.length < 4 or url.indexOf('.') is -1)
   bl = API.use.google.sheets.feed API.settings.service.openaccessbutton?.google?.sheets?.blacklist, stale
   blacklist = []

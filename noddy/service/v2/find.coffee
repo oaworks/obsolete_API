@@ -88,6 +88,7 @@ API.add 'service/oab/catalogue/finder',
     res.count = oab_catalogue.count res.query
     res.find = oab_catalogue.finder res.query
     return res
+API.add 'service/oab/catalogue/history', () -> return oab_catalogue.history this
 API.add 'service/oab/catalogue/:cid', get: () -> return oab_catalogue.get this.urlParams.cid
 
 API.add 'service/oab/metadata',
@@ -268,6 +269,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
     options.url = options.id
     delete options.id
   if options.url
+    options.url = options.url.toString() if typeof options.url is 'number'
     if options.url.indexOf('/10.') isnt -1
       # we don't use a regex to try to pattern match a DOI because people often make mistakes typing them, so instead try to find one
       # in ways that may still match even with different expressions (as long as the DOI portion itself is still correct after extraction we can match it)
@@ -371,7 +373,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
           res.found = catalogued.found
           res.url = catalogued.url
           res.url = res.url[0] if _.isArray res.url
-        else if catalogued.createdAt > Date.now() - res.refresh*86400000
+        else if (catalogued.updatedAt ? catalogued.createdAt) > Date.now() - res.refresh*86400000
           _get.metadata catalogued.metadata # it is in the catalogue but we don't have a link for it, and it is within refresh days old, so re-use the metadata from it
           res.cached = true
 
@@ -513,8 +515,8 @@ API.service.oab.find = (options={}, metadata={}, content) ->
           more = tid
           used.push tid
       if more
-        done['oabutton'+more] = true
         if ul then _prl('oabutton') else _run('oabutton') # everything else waits for one check of the catalogue
+        done['oabutton'+more] = true
 
     if not res.cached or (options.metadata.length and not _got()) or (not res.cached and res.find and not res.url)
       if metadata.doi and not done.dois
