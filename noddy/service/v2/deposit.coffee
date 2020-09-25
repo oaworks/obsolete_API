@@ -336,7 +336,7 @@ API.service.oab.deposit.config = (user, config) ->
           Users.update user._id, upd
     try
       config ?= user.service.openaccessbutton.deposit?.config ? {}
-      try config.owner = user.email ? user.emails[0].address
+      try config.owner ?= user.email ? user.emails[0].address
       return config
     catch
       return {}

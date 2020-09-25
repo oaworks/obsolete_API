@@ -474,8 +474,8 @@ API.service.oab.ill.config = (user, config) ->
             upd['service.openaccessbutton.ill.old_config'] = user.service.openaccessbutton.ill.config
           Users.update user._id, upd
     try
-      config ?= user.service.openaccessbutton.ill.config ? {}
-      try config.owner ?= if user.email then user.email else user.emails[0].address
+      config ?= user.service.openaccessbutton.ill?.config ? {}
+      try config.owner ?= user.email ? user.emails[0].address
       return config
     catch
       return {}
