@@ -12,7 +12,6 @@ API.service.oab.citation = (citation) ->
       citation = citation.replace(/citation\:/gi,'').trim()
       citation = citation.split('title')[1].trim() if citation.indexOf('title') isnt -1
       citation = citation.replace(/^"/,'').replace(/^'/,'').replace(/"$/,'').replace(/'$/,'')
-      console.log citation
       rs.doi = citation.split('doi:')[1].split(',')[0].split(' ')[0].trim() if citation.indexOf('doi:') isnt -1
       rs.doi = citation.split('doi.org/')[1].split(',')[0].split(' ')[0].trim() if citation.indexOf('doi.org/') isnt -1
       try
@@ -163,6 +162,7 @@ API.service.oab.metadata = (options={}, metadata, content) -> # pass-through to 
   if typeof options is 'string'
     options = if options.indexOf('10.') is 0 then {doi: options} else if options.indexOf('http') is 0 then {url: options} else {title: options}
   options.metadata ?= true
+  #options.refresh ?= true
   options.find = false
   return API.service.oab.find(options, metadata, content).metadata
 
@@ -244,7 +244,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
   else if _.isEmpty(metadata) and typeof options.metadata is 'object' and not _.isArray options.metadata
     metadata = options.metadata
     options.metadata = true
-  options.metadata = if options.metadata is true then ['title','doi','author','journal','issn','volume','issue','page','published','year'] else if _.isArray(options.metadata) then options.metadata else []
+  options.metadata = if options.metadata is true then ['title','doi','author','journal','issn','volume','issue','page','published','publisher','year'] else if _.isArray(options.metadata) then options.metadata else []
   content ?= options.dom if options.dom?
 
   if metadata.url
@@ -293,7 +293,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       else
         metadata.title = options.url
     delete options.url if options.url.indexOf('http') isnt 0 or options.url.indexOf('.') is -1
-  if options.title and (options.title.indexOf('{') isnt -1 or (options.title.replace('...','').match(/\./gi) ? []).length > 3 or (options.title.match(/\(/gi) ? []).length > 2)
+  if options.title and (options.title.indexOf('http') isnt -1 or options.title.indexOf('{') isnt -1 or (options.title.replace('...','').match(/\./gi) ? []).length > 3 or (options.title.match(/\(/gi) ? []).length > 2)
     options.citation = options.title # titles that look like citations
     delete options.title
   try _get.metadata(API.service.oab.citation options.citation) if options.citation?
@@ -319,7 +319,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
   # other possible sources are ['base','dissemin','share','core','openaire','bing','fighsare']
   # can also add journal, which checks doaj for the journal info - later may check more about journals
   res.sources = options.sources ? ['oabutton','catalogue','oadoi','crossref','epmc','doaj','reverse','scrape']
-  res.sources.push('bing') if options.bing and (options.plugin in ['widget','oasheet'] or options.from in ['illiad','clio'] or res.exlibris)
+  res.sources.push('bing') if options.bing and options.plugin is 'instantill' # (options.plugin in ['widget','oasheet','instantill'] or options.from in ['illiad','clio'] or res.exlibris)
   options.refresh = if options.refresh is 'true' or options.refresh is true then true else if options.refresh is 'false' or options.refesh is false then false else options.refresh
   try res.refresh = if options.refresh is false then 30 else if options.refresh is true then 0 else parseInt options.refresh
   res.refresh = 30 if typeof res.refresh isnt 'number' or isNaN res.refresh
@@ -350,12 +350,15 @@ API.service.oab.find = (options={}, metadata={}, content) ->
   res.test ?= true if res.demo # don't save things coming from the demo accounts into the catalogue later
 
   # sub-processes to loop call until all result parts are found ================
+  done = {}
+  used = []
+
   _got = (obj=metadata) ->
     # check if we have everything we need yet
     for w in options.metadata
       if not obj[w]?
         return false
-      return true
+    return true
 
   _get.oabutton = () ->
     catalogued = oab_catalogue.finder metadata
@@ -399,26 +402,33 @@ API.service.oab.find = (options={}, metadata={}, content) ->
   # but for now, pulling the title and using the above seems to be working well enough
 
   _get.bing = () ->
-    API.settings.service.openaccessbutton.resolve.bing = {max:1000,cap:'30days'} if API.settings?.service?.openaccessbutton?.resolve?.bing is true
-    cap = if API.settings?.service?.openaccessbutton?.resolve?.bing?.cap? then API.job.cap(API.settings.service.openaccessbutton?.resolve?.bing?.max ? 1000, API.settings.service.openaccessbutton?.resolve?.bing?.cap ? '30days','oabutton_bing') else undefined
+    API.settings.service.openaccessbutton.resolve.bing = {max:10000,cap:'30days'} if API.settings?.service?.openaccessbutton?.resolve?.bing is true
+    cap = if API.settings?.service?.openaccessbutton?.resolve?.bing?.cap? then API.job.cap(API.settings.service.openaccessbutton?.resolve?.bing?.max ? 10000, API.settings.service.openaccessbutton?.resolve?.bing?.cap ? '30days','oabutton_bing') else undefined
     if cap?.capped
       res.capped = true
     else
       mct = unidecode(metadata.title.toLowerCase()).replace(/[^a-z0-9 ]+/g, " ").replace(/\s\s+/g, ' ')
       bing = API.use.microsoft.bing.search mct, true, 2592000000, API.settings.use.microsoft.bing.key # search bing for what we think is a title (caching up to 30 days)
-      bct = unidecode(bing.data[0].name.toLowerCase()).replace('(pdf)','').replace(/[^a-z0-9 ]+/g, " ").replace(/\s\s+/g, ' ')
-      if not API.service.oab.blacklist(bing.data[0].url) and mct.replace(/ /g,'').indexOf(bct.replace(/ /g,'')) is 0 # if the URL is usable and tidy bing title is not a partial match to the start of the provided title, we won't do anything with it
-        try
-          if bing.data[0].url.toLowerCase().indexOf('.pdf') is -1 or mct.replace(/[^a-z0-9]+/g, "").indexOf(bing.data[0].url.toLowerCase().split('.pdf')[0].split('/').pop().replace(/[^a-z0-9]+/g, "")) is 0
-            options.url = bing.data[0].url.replace(/"/g,'')
-          else
-            content = API.convert.pdf2txt(bing.data[0].url)
-            content = content.substring(0,1000) if content.length > 1000
-            content = content.toLowerCase().replace(/[^a-z0-9]+/g, "").replace(/\s\s+/g, '')
-            if content.indexOf(mct.replace(/ /g, '')) isnt -1
+      #res.bing = bing ? {}
+      #res.bing.cap = cap
+      if bing?.data? and bing.data.length
+        bct = unidecode(bing.data[0].name.toLowerCase()).replace('(pdf)','').replace(/[^a-z0-9 ]+/g, " ").replace(/\s\s+/g, ' ')
+        if not API.service.oab.blacklist(bing.data[0].url) and mct.replace(/ /g,'').indexOf(bct.replace(/ /g,'')) is 0 # if the URL is usable and tidy bing title is not a partial match to the start of the provided title, we won't do anything with it
+          try
+            if bing.data[0].name.indexOf('PDF') is -1 and (bing.data[0].url.toLowerCase().indexOf('.pdf') is -1 or mct.replace(/[^a-z0-9]+/g, "").indexOf(bing.data[0].url.toLowerCase().split('.pdf')[0].split('/').pop().replace(/[^a-z0-9]+/g, "")) is 0)
               options.url = bing.data[0].url.replace(/"/g,'')
-        catch
-          options.url = bing.data[0].url.replace(/"/g,'')
+            else
+              content = API.convert.pdf2txt(bing.data[0].url)
+              content = content.substring(0,1000) if content.length > 1000
+              content = content.toLowerCase().replace(/[^a-z0-9]+/g, "").replace(/\s\s+/g, '')
+              if content.indexOf(mct.replace(/ /g, '')) isnt -1
+                options.url = bing.data[0].url.replace(/"/g,'')
+                try
+                  _get.content()
+                  done.content = true
+          catch
+            options.url = bing.data[0].url.replace(/"/g,'')
+          metadata.pmid = options.url.replace(/\/$/,'').split('/').pop() if options.url.indexOf('pubmed.ncbi') isnt -1
 
   _get.journal = () ->
     dres = API.use.doaj.journals.search(if metadata.issn then 'issn:"'+metadata.issn+'"' else 'bibjson.journal.title:"'+metadata.journal+'"')
@@ -454,7 +464,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
     if not _got() or (res.find and not res.url) # check again due to any delay in loops
       runs = Date.now()
       if typeof _get[src] is 'function'
-        try _get[src]()
+        _get[src]()
       else
         try
           rs = false
@@ -486,7 +496,14 @@ API.service.oab.find = (options={}, metadata={}, content) ->
             rs = API.use[src][which] metadata[which]
           if typeof rs is 'object'
             mt = rs.title ? rs.dctitle ? rs.bibjson?.title ? rs.metadata?['oaf:result']?.title?.$
-            if (which isnt 'title' or (mt and ((mt.length > metadata.title.length and metadata.title.split(' ').length > 5 and mt.toLowerCase().replace(/[^a-z0-9]/g,'').indexOf(metadata.title.toLowerCase().replace(/[^a-z0-9]/g,'')) is 0) or (mt.length <= metadata.title.length*1.2 and mt.length >= metadata.title.length*.8 and metadata.title.toLowerCase().replace(/ /g,'').indexOf(mt.toLowerCase().replace(' ','').replace(' ','').split(' ')[0]) is 0))))
+            acceptable = which isnt 'title'
+            if not acceptable and mt
+              if not acceptable = mt.length > metadata.title.length and metadata.title.split(' ').length > 5 and mt.toLowerCase().replace(/[^a-z0-9]/g,'').indexOf(metadata.title.toLowerCase().replace(/[^a-z0-9]/g,'')) is 0
+                if not acceptable = mt.length <= metadata.title.length*1.2 and mt.length >= metadata.title.length*.8 and metadata.title.toLowerCase().replace(/ /g,'').indexOf(mt.toLowerCase().replace(' ','').replace(' ','').split(' ')[0]) is 0
+                  lvs = API.tdm.levenshtein mt, metadata.title, true
+                  longest = if lvs.length.a > lvs.length.b then lvs.length.a else lvs.length.b
+                  acceptable = lvs.distance < 2 or longest/lvs.distance > 10
+            if acceptable
               _get.metadata rs
               if (rs.url or rs.redirect) and (src isnt 'crossref' or (typeof rs.licence is 'string' and rs.licence.indexOf('creativecommons') isnt -1)) 
                 res.redirect = if rs.redirect then rs.redirect else rs.url
@@ -501,8 +518,6 @@ API.service.oab.find = (options={}, metadata={}, content) ->
     if not _running[src+which]
       _running[src+which] = true
       Meteor.setTimeout (() -> _run src, which), 1
-  done = {}
-  used = []
   _loop = () ->
     dd = _.clone done
     md = _.clone metadata
@@ -530,7 +545,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
         if typeof metadata.title is 'string' and metadata.title.length > 8 and metadata.title.split(' ').length > 2 and not done.titles
           done.titles = true
           for src in res.sources
-            _prl(src, 'title') if src not in ['oadoi','oabutton','catalogue','reverse','scrape','bing','crossref'] # TODO remove crossref from this list once our crossref title lookup works better
+            _prl(src, 'title') if src not in ['oadoi','oabutton','catalogue','reverse','scrape','bing']
         else if not done.reverse and 'reverse' in res.sources and ((typeof metadata.title is 'string' and metadata.title.length > 8 and metadata.title.split(' ').length > 2) or options.citation)
           done.reverse = true
           _run 'reverse'
@@ -557,12 +572,12 @@ API.service.oab.find = (options={}, metadata={}, content) ->
     if metadata.doi
       for rn of _running
         delete _running[rn] if rn.indexOf('title') isnt -1 # don't wait for running title lookups if doi found since they started
-          
+    
+    #console.log _running
     if (not _got() or (res.find and not res.url)) and (not _.isEmpty(_running) or not _.isEqual(dd, done) or not _.isEqual(md, metadata))
       future = new Future()
       Meteor.setTimeout (() -> future.return()), 50
       future.wait()
-      #console.log _running
       _loop()
   _loop()
   

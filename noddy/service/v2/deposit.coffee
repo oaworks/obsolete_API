@@ -260,15 +260,19 @@ API.service.oab.deposit = (d,options={},files,uid) ->
   dd = {deposit: d.deposit, permissions: perms}
   oab_catalogue.update d._id, dd
 
-  tos = API.settings.service.openaccessbutton.notify.deposit ? ['mark@cottagelabs.com','joe@righttoresearch.org','natalianorori@gmail.com']
-  bcc = undefined
-  if dep.type isnt 'review'
-    bcc = tos
-    tos = []
+  bcc = API.settings.service.openaccessbutton.notify.deposit ? ['mark@cottagelabs.com','joe@righttoresearch.org','natalianorori@gmail.com']
+  #bcc = []
+  #if dep.type isnt 'review'
+  #  bcc = tos
+  #  tos = []
+  tos = []
   if options.from and options.from isnt 'anonymous'
     try
       iacc = API.accounts.retrieve options.from
       tos.push iacc.email ? iacc.emails[0].address # the institutional user may set a config value to use as the contact email address but for now it is the account address
+  if tos.length is 0
+    tos = _.clone bcc
+    bcc = []
 
   dep.permissions = perms
   dep.metadata = d.metadata
@@ -295,7 +299,7 @@ API.service.oab.deposit = (d,options={},files,uid) ->
       to: tos
       subject: (sub.subject ? dep.type + ' deposit')
       html: sub.content
-    ml.bcc = bcc if bcc? # passing undefined to mail seems to cause errors, so only set if definitely exists
+    ml.bcc = bcc if bcc.length # passing undefined to mail seems to cause errors, so only set if definitely exists
     ml.attachments = [{filename: (files[0].filename ? files[0].name), content: files[0].data}] if _.isArray(files) and files.length
     API.service.oab.mail ml
 
