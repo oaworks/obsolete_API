@@ -301,7 +301,8 @@ API.service.oab.find = (options={}, metadata={}, content) ->
     if ts.indexOf('/') isnt -1 and ts.length > 6
       options.doi = '10.' + ts
       metadata.doi = options.doi
-      delete options.title
+      delete metadata.title
+      delete metadata.citation
   try _get.metadata(API.service.oab.citation options.citation) if options.citation?
   metadata.title = metadata.title.replace(/(<([^>]+)>)/g,'').replace(/\+/g,' ').trim() if typeof metadata.title is 'string'
   delete metadata.doi if typeof metadata.doi isnt 'string' or metadata.doi.indexOf('10.') isnt 0
