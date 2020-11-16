@@ -260,10 +260,10 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
       altoa =
         can_archive: true
         version: 'acceptedVersion' # maybe publishedVersion? what does doaj allow?
-        versions: undefined #if not oadb?.version? then ['submittedVersion','acceptedVersion'] else if oadb?.version in ['submittedVersion','preprint'] then ['submittedVersion'] else if oadb?.version in ['acceptedVersion','postprint'] then ['submittedVersion', 'acceptedVersion'] else  ['submittedVersion', 'acceptedVersion', 'publishedVersion']
+        versions: []
         licence: undefined
         licence_terms: ""
-        licences: undefined
+        licences: []
         locations: ['institutional repository']
         embargo_months: undefined
         issuer:
@@ -298,7 +298,9 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
       else
         delete altoa.licence
       if altoa.licence
-        altoa.licence = [{type: altoa.licence, terms: ""}]
+        altoa.licences = [{type: altoa.licence, terms: ""}]
+      if altoa.version
+        altoa.versions = if altoa.version in ['submittedVersion','preprint'] then ['submittedVersion'] else if altoa.version in ['acceptedVersion','postprint'] then ['submittedVersion', 'acceptedVersion'] else  ['submittedVersion', 'acceptedVersion', 'publishedVersion']
       altoa.score = _score altoa
       perms.all_permissions.push altoa
 
