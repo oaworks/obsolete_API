@@ -6,7 +6,7 @@ API.service.oab ?= {}
 
 # these are global so can be accessed on other oabutton files
 @oab_support = new API.collection {index:"oab",type:"support"}
-@oab_catalogue = new API.collection {index:"oab",type:"catalogue",history:true}
+@oab_catalogue = new API.collection {index:"oab",type:"catalogue"}
 @oab_request = new API.collection {index:"oab",type:"request",history:true}
 @oab_find = new API.collection {index:"oab",type:"find"}
 @oab_ill = new API.collection {index:"oab",type:"ill"}

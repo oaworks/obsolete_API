@@ -307,7 +307,6 @@ API.service.oab.find = (options={}, metadata={}, content) ->
   options.permissions ?= options.plugin is 'shareyourpaper' # don't get permissions by default now that the permissions check could take longer
   options.ill ?= (options.from? or options.config?) and options.plugin is 'instantill' # get ILL info too if necessary
   options.bing = API.settings?.service?.openaccessbutton?.resolve?.bing isnt false and API.settings?.service?.openaccessbutton?.resolve?.bing?.use isnt false
-
   # switch exlibris URLs for titles, which the scraper knows how to extract, because the exlibris url would always be the same
   if not metadata.title and content and typeof options.url is 'string' and (options.url.indexOf('alma.exlibrisgroup.com') isnt -1 or options.url.indexOf('/exlibristest') isnt -1)
     delete options.url
@@ -461,58 +460,57 @@ API.service.oab.find = (options={}, metadata={}, content) ->
   times = []
   _running = {}
   _run = (src, which='') ->
-    if not _got() or (res.find and not res.url) # check again due to any delay in loops
-      runs = Date.now()
-      if typeof _get[src] is 'function'
-        _get[src]()
-      else
-        try
-          rs = false
-          if src is 'oadoi' and  which is 'doi' and metadata[which]?
-            rs = API.use.oadoi.doi metadata.doi, true
-          else if src is 'crossref' and which in ['doi','title']
-            # crossref title lookup can accept full metadata object to compare additional metadata possibly in a citation
-            if which is 'title'
-              if options.citation?
-                mq = _.clone metadata
-                mq.citation = options.citation
-              else
-                mq = metadata.title
+    runs = Date.now()
+    if typeof _get[src] is 'function'
+      _get[src]()
+    else if not _got() or (res.find and not res.url) # check again due to any delay in loops
+      try
+        rs = false
+        if src is 'oadoi' and  which is 'doi' and metadata[which]?
+          rs = API.use.oadoi.doi metadata.doi, true
+        else if src is 'crossref' and which in ['doi','title']
+          # crossref title lookup can accept full metadata object to compare additional metadata possibly in a citation
+          if which is 'title'
+            if options.citation?
+              mq = _.clone metadata
+              mq.citation = options.citation
             else
-              mq = metadata.doi
-            rs = API.use.crossref.works[which] mq, true
-            if which is 'doi' and not rs?.crossref_type
-              res.doi_not_in_crossref = metadata.doi
-              delete options.url if typeof options.url is 'string' and options.url.indexOf('doi.org/' + metadata.doi) isnt -1
-              delete metadata.doi
-              delete options.doi
-          else if src is 'epmc'
-            rs = API.use.europepmc[if which is 'id' then (if metadata.pmcid then 'pmc' else 'pmid') else which] (if which is 'id' then (metadata.pmcid ? metadata.pmid) else metadata[which]), true
-          else if src is 'doaj' and which in ['doi','title']
-            rs = API.use.doaj.articles[which] metadata[which]
-          else if typeof API.use[src]?[which] is 'function' and metadata[which]?
-            # other possible sources to check title or doi are ['base','dissemin','share','core','openaire','fighsare'] 
-            # but we do not use them by default any more
-            rs = API.use[src][which] metadata[which]
-          if typeof rs is 'object'
-            mt = rs.title ? rs.dctitle ? rs.bibjson?.title ? rs.metadata?['oaf:result']?.title?.$
-            acceptable = which isnt 'title'
-            if not acceptable and mt
-              if not acceptable = mt.length > metadata.title.length and metadata.title.split(' ').length > 5 and mt.toLowerCase().replace(/[^a-z0-9]/g,'').indexOf(metadata.title.toLowerCase().replace(/[^a-z0-9]/g,'')) is 0
-                if not acceptable = mt.length <= metadata.title.length*1.2 and mt.length >= metadata.title.length*.8 and metadata.title.toLowerCase().replace(/ /g,'').indexOf(mt.toLowerCase().replace(' ','').replace(' ','').split(' ')[0]) is 0
-                  lvs = API.tdm.levenshtein mt, metadata.title, true
-                  longest = if lvs.length.a > lvs.length.b then lvs.length.a else lvs.length.b
-                  acceptable = lvs.distance < 2 or longest/lvs.distance > 10
-            if acceptable
-              _get.metadata rs
-              if (rs.url or rs.redirect) and (src isnt 'crossref' or (typeof rs.licence is 'string' and rs.licence.indexOf('creativecommons') isnt -1)) 
-                res.redirect = if rs.redirect then rs.redirect else rs.url
-                res.url = res.redirect
-                res.found[src] ?= res.url
-      res.checked.push(src) if src not in res.checked
-      rune = Date.now()
-      times.push {src: src, which: which, started: runs, ended: rune, took: rune-runs}
-      delete _running[src+which]
+              mq = metadata.title
+          else
+            mq = metadata.doi
+          rs = API.use.crossref.works[which] mq, true
+          if which is 'doi' and not rs?.crossref_type
+            res.doi_not_in_crossref = metadata.doi
+            delete options.url if typeof options.url is 'string' and options.url.indexOf('doi.org/' + metadata.doi) isnt -1
+            delete metadata.doi
+            delete options.doi
+        else if src is 'epmc'
+          rs = API.use.europepmc[if which is 'id' then (if metadata.pmcid then 'pmc' else 'pmid') else which] (if which is 'id' then (metadata.pmcid ? metadata.pmid) else metadata[which]), true
+        else if src is 'doaj' and which in ['doi','title']
+          rs = API.use.doaj.articles[which] metadata[which]
+        else if typeof API.use[src]?[which] is 'function' and metadata[which]?
+          # other possible sources to check title or doi are ['base','dissemin','share','core','openaire','fighsare'] 
+          # but we do not use them by default any more
+          rs = API.use[src][which] metadata[which]
+        if typeof rs is 'object'
+          mt = rs.title ? rs.dctitle ? rs.bibjson?.title ? rs.metadata?['oaf:result']?.title?.$
+          acceptable = which isnt 'title'
+          if not acceptable and mt
+            if not acceptable = mt.length > metadata.title.length and metadata.title.split(' ').length > 5 and mt.toLowerCase().replace(/[^a-z0-9]/g,'').indexOf(metadata.title.toLowerCase().replace(/[^a-z0-9]/g,'')) is 0
+              if not acceptable = mt.length <= metadata.title.length*1.2 and mt.length >= metadata.title.length*.8 and metadata.title.toLowerCase().replace(/ /g,'').indexOf(mt.toLowerCase().replace(' ','').replace(' ','').split(' ')[0]) is 0
+                lvs = API.tdm.levenshtein mt, metadata.title, true
+                longest = if lvs.length.a > lvs.length.b then lvs.length.a else lvs.length.b
+                acceptable = lvs.distance < 2 or longest/lvs.distance > 10
+          if acceptable
+            _get.metadata rs
+            if (rs.url or rs.redirect) and (src isnt 'crossref' or (typeof rs.licence is 'string' and rs.licence.indexOf('creativecommons') isnt -1)) 
+              res.redirect = if rs.redirect then rs.redirect else rs.url
+              res.url = res.redirect
+              res.found[src] ?= res.url
+    res.checked.push(src) if src not in res.checked
+    rune = Date.now()
+    times.push {src: src, which: which, started: runs, ended: rune, took: rune-runs}
+    delete _running[src+which]
 
   _prl = (src, which='') -> 
     if not _running[src+which]
