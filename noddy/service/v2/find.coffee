@@ -296,6 +296,12 @@ API.service.oab.find = (options={}, metadata={}, content) ->
   if options.title and (options.title.indexOf('http') isnt -1 or options.title.indexOf('{') isnt -1 or (options.title.replace('...','').match(/\./gi) ? []).length > 3 or (options.title.match(/\(/gi) ? []).length > 2)
     options.citation = options.title # titles that look like citations
     delete options.title
+  if (options.citation or options.title) and not options.doi and (options.citation ? options.title).indexOf('10.') isnt -1
+    ts = (options.citation ? options.title).split('10.')[1].split(' ')[0]
+    if ts.indexOf('/') isnt -1 and ts.length > 6
+      options.doi = '10.' + ts
+      metadata.doi = options.doi
+      delete options.title
   try _get.metadata(API.service.oab.citation options.citation) if options.citation?
   metadata.title = metadata.title.replace(/(<([^>]+)>)/g,'').replace(/\+/g,' ').trim() if typeof metadata.title is 'string'
   delete metadata.doi if typeof metadata.doi isnt 'string' or metadata.doi.indexOf('10.') isnt 0
