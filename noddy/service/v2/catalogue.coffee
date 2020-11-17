@@ -463,20 +463,16 @@ API.service.academic.journal.load = (sources=['wikidata','crossref','doaj'], ref
       delete journal.updatedAt
       delete journal.updated_date
 
-      if (journal.issn? and journal.issn.length) #or journal.title
-        found = false
-        if journal.issn?
-          journal.issn = [journal.issn] if typeof journal.issn is 'string'
-          found = academic_journal.find 'issn.exact:"' + journal.issn.join('" OR issn.exact:"') + '"'
-        else if journal.title and titles
-          found = academic_journal.find 'title:"' + journal.title + '"'
-          found = false if found? and journal.title.toLowerCase() isnt found.title.toLowerCase()
+      journal.issn = [journal.issn] if typeof journal.issn is 'string'
+      journal.issn = _.uniq(journal.issn) if journal.issn? and journal.issn.length > 1
+      if journal.issn? and journal.issn.length
+        found = academic_journal.find 'issn.exact:"' + journal.issn.join('" OR issn.exact:"') + '"'
         if typeof found isnt 'object'
-          journal.issn = _.uniq(journal.issn) if journal.issn? and journal.issn.length
           batch.push journal
           saved += 1
         else
           upd = {}
+          found.issn = [found.issn] if typeof found.issn is 'string'
           for k of journal
             if k in ['issn','title','publisher'] and journal.src[0] in ['crossref','doaj'] # allow crossref ISSN values to override others because for example Development has additional ISSNs in wikidata that should not be there
               if not _.isEqual journal[k], found[k]
@@ -490,15 +486,20 @@ API.service.academic.journal.load = (sources=['wikidata','crossref','doaj'], ref
             else if not found[k]?
               upd[k] = journal[k]
             else if _.isArray journal[k]
-              if not _.isArray(found[k]) or found[k].length isnt journal[k].length 
+              if not _.isArray found[k]
                 upd[k] = journal[k]
+              else if journal[k].length is 0 and found[k].length
+                upd[k] = found[k]
               else
-                differs = true
-                try
-                  jks = JSON.stringify(journal[k]).split('').sort().join('')
-                  fks = JSON.stringify(found[k]).split('').sort().join('')
-                  differs = false if jks is fks
-                upd[k] = journal[k] if differs
+                if journal[k].length and typeof journal[k][0] is 'string'
+                  upd[k] = _.union journal[k], found[k]
+                else
+                  try
+                    if JSON.stringify(journal[k]).split('').sort().join('') isnt JSON.stringify(found[k]).split('').sort().join('')
+                      upd[k] = journal[k]
+                  catch
+                    upd[k] = journal[k]
+              delete upd[k] if _.isEqual upd[k], found[k]
             else if typeof found[k] is 'object'
               upd[k] = _.clone found[k]
               for kk of journal[k]
@@ -508,7 +509,6 @@ API.service.academic.journal.load = (sources=['wikidata','crossref','doaj'], ref
             jwd = journal.wikidata_in_doaj.toUpperCase().trim() 
             if jwd not in upd.issn
               upd.issn.push jwd
-          upd.issn = _.uniq(upd.issn) if upd.issn? and upd.issn.length
           if not _.isEmpty upd
             academic_journal.update found._id, upd
             updated += 1
