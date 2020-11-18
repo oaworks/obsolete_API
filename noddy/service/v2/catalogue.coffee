@@ -315,7 +315,7 @@ API.service.academic.journal.load_oa = (refresh, issn_or_rec, doi) ->
     oadoi_is_oa = 0
     if 'doaj'in rec.src
       rec.is_oa = true
-    else
+    else if false # decided not to use oadoi as a source of "openness" because it does not meet requirements yet
       issn = rec.issn ? rec.ISSN
       if issn?
         issn = [issn] if typeof issn is 'string'

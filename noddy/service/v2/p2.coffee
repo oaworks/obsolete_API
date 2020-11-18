@@ -208,7 +208,7 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
         issns.push(an) if an not in issns
     if not meta.doi?
       for alti in issns
-        if doiex = API.use.crossref.journals.dois.example meta.issn
+        if doiex = API.use.crossref.journals.dois.example alti
           meta.doi = doiex
           break
     if not meta.doi?
@@ -264,7 +264,9 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
   
   if typeof af is 'object' and af.is_oa isnt false
     af.is_oa = true if not af.is_oa? and ('doaj' in af.src or af.wikidata_in_doaj)
-    if not af.is_oa? and coa = API.service.academic.journal.is_oa issns, meta.doi
+    # using oadoi to check OA if not in doaj has been disabled for now as their requirements don't yet match what we need.
+    # so no use running the extra is_oa check here yet
+    if not af.is_oa? and false #coa = API.service.academic.journal.is_oa issns, meta.doi
       af = coa
     if af.is_oa
       altoa =
