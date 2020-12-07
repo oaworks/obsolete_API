@@ -2,35 +2,6 @@
 import Future from 'fibers/future'
 import unidecode from 'unidecode'
 
-#Baker, T. S., Eisenberg, D., & Eiserling, F. (1977). Ribulose Bisphosphate Carboxylase: A Two-Layered, Square-Shaped Molecule of Symmetry 422. Science, 196(4287), 293-295. doi:10.1126/science.196.4287.293
-API.service.oab.citation = (citation) ->
-  rs = if typeof citation is 'object' then citation else {}
-  if typeof citation is 'string'
-    try
-      rs = JSON.parse options.citation
-    catch
-      citation = citation.replace(/citation\:/gi,'').trim()
-      citation = citation.split('title')[1].trim() if citation.indexOf('title') isnt -1
-      citation = citation.replace(/^"/,'').replace(/^'/,'').replace(/"$/,'').replace(/'$/,'')
-      rs.doi = citation.split('doi:')[1].split(',')[0].split(' ')[0].trim() if citation.indexOf('doi:') isnt -1
-      rs.doi = citation.split('doi.org/')[1].split(',')[0].split(' ')[0].trim() if citation.indexOf('doi.org/') isnt -1
-      try
-        if citation.indexOf('|') isnt -1 or citation.indexOf('}') isnt -1
-          rs.title = citation.split('|')[0].split('}')[0].trim()
-        if citation.split('"').length > 2
-          rs.title = citation.split('"')[1].trim()
-        else if citation.split("'").length > 2
-          rs.title ?= citation.split("'")[1].trim()
-      try
-        pts = citation.replace(/,\./g,' ').split ' '
-        for pt in pts
-          if not rs.year
-            pt = pt.replace /[^0-9]/g,''
-            if pt.length is 4
-              sy = parseInt pt
-              rs.year = sy if typeof sy is 'number' and not isNaN sy
-  return rs
-  
 API.service.oab.ftitle = (title) ->
   # a useful way to show a title (or other string) as one long string with no weird characters
   ft = ''
@@ -41,7 +12,7 @@ API.service.oab.ftitle = (title) ->
 API.service.oab.finder = (metadata) ->
   if metadata.citation?
     for k of c = API.service.oab.citation metadata.citation
-      metadata[k] ?= c[k]
+      metadata[k] = c[k]
   finder = ''
   for tid in ['doi','pmid','pmcid','url','title']
     if typeof metadata[tid] is 'string' or typeof metadata[tid] is 'number' or _.isArray metadata[tid]
@@ -81,6 +52,7 @@ API.add 'service/oab/finds', () -> return oab_find.search this, {exclude: ['conf
 API.add 'service/oab/found', () -> return oab_catalogue.search this, {restrict:[{exists: {field:'url'}}], exclude: ['config']}
 
 API.add 'service/oab/catalogue', () -> return oab_catalogue.search this
+API.add 'service/oab/catalogue/keys', get: () -> return oab_catalogue.keys()
 API.add 'service/oab/catalogue/finder', 
   get: () ->
     res = query: API.service.oab.finder this.queryParams
@@ -93,7 +65,14 @@ API.add 'service/oab/catalogue/:cid', get: () -> return oab_catalogue.get this.u
 API.add 'service/oab/metadata',
   get: () -> return API.service.oab.metadata this.queryParams
   post: () -> return API.service.oab.metadata this.request.body
+API.add 'service/oab/metadata/keys',
+  get: () -> 
+    keys = []
+    for k in oab_catalogue.keys()
+      keys.push(k.replace('metadata.','')) if k.indexOf('metadata') is 0 and k isnt 'metadata'
+    return keys
 
+API.add 'service/oab/citation', get: () -> return API.service.oab.citation this.queryParams.citation ? this.queryParams.cite ? this.queryParams.q
 
 
 # exists for legacy reasons, _avail should be altered to make sure the _find returns what /availability used to
@@ -126,7 +105,7 @@ API.service.oab.availability = (opts,v2) ->
     afnd.data.match = afnd.data.match[0] if _.isArray afnd.data.match
     try
       afnd.data.ill = afnd.v2.ill
-      afnd.data.meta.article = _.clone(afnd.v2.metadata) if afnd.v2.metadata?
+      afnd.data.meta.article = JSON.parse(JSON.stringify(afnd.v2.metadata)) if afnd.v2.metadata?
       afnd.data.meta.cache = afnd.v2.cached
       afnd.data.meta.refresh = afnd.v2.refresh
       afnd.data.meta.article.url = afnd.data.meta.article.url[0] if _.isArray afnd.data.meta.article.url
@@ -183,7 +162,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
   # metadata cleaner ===========================================================
   _get = {}
   _get.metadata = (input) ->
-    info = _.clone input # so it does not get wiped during loops
+    info = JSON.parse JSON.stringify input # so it does not get wiped during loops
     if typeof info is 'object' and not _.isEmpty info
       info.licence ?= info.best_oa_location?.license ? info.license
       info.issn ?= info.journalInfo?.journal?.issn ? info.journal?.issn
@@ -303,7 +282,11 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       metadata.doi = options.doi
       delete metadata.title
       delete metadata.citation
-  try _get.metadata(API.service.oab.citation options.citation) if options.citation?
+  console.log options.citation, options.title
+  if options.citation? or options.title?
+    try
+      cmt = API.service.oab.citation options.citation ? options.title
+      metadata[c] = cmt[c] for c of cmt
   metadata.title = metadata.title.replace(/(<([^>]+)>)/g,'').replace(/\+/g,' ').trim() if typeof metadata.title is 'string'
   delete metadata.doi if typeof metadata.doi isnt 'string' or metadata.doi.indexOf('10.') isnt 0
   if typeof metadata.doi is 'string' # gets rid of some junk passed in after doi in some cases
@@ -323,8 +306,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
   res.from = options.from if options.from?
   res.find = options.find ? true
   # other possible sources are ['base','dissemin','share','core','openaire','bing','fighsare']
-  # can also add journal, which checks doaj for the journal info - later may check more about journals
-  res.sources = options.sources ? ['oabutton','catalogue','oadoi','crossref','epmc','doaj','reverse','scrape']
+  res.sources = options.sources ? ['oabutton','catalogue','oadoi','crossref','epmc','scrape']
   res.sources.push('bing') if options.bing and options.plugin is 'instantill' # (options.plugin in ['widget','oasheet','instantill'] or options.from in ['illiad','clio'] or res.exlibris)
   options.refresh = if options.refresh is 'true' or options.refresh is true then true else if options.refresh is 'false' or options.refesh is false then false else options.refresh
   try res.refresh = if options.refresh is false then 30 else if options.refresh is true then 0 else parseInt options.refresh
@@ -390,23 +372,6 @@ API.service.oab.find = (options={}, metadata={}, content) ->
     inc = API.service.academic.article.doi metadata.doi
     _get.metadata(inc) if inc?
     
-  _get.reverse = () ->
-    if not crs?.doi? and typeof metadata.title is 'string' and metadata.title.length > 8 and metadata.title.split(' ').length > 2
-      check = API.use.crossref.reverse metadata.title, undefined, true
-      crs = check if check.doi and check.title? and check.title.length <= metadata.title.length*1.2 and check.title.length >= metadata.title.length*.8 and metadata.title.toLowerCase().replace(/ /g,'').indexOf(check.title.toLowerCase().replace(' ','').replace(' ','').replace(' ','').split(' ')[0]) isnt -1
-    if not crs?.doi? and options.citation?
-      check = API.use.crossref.reverse options.citation, undefined, true
-      crs = check if check.doi and check.title? and check.title.length and (not metadata.year? or not check.year? or metadata.year is check.year) and (not metadata.journal? or not check.journal? or metadata.journal.toLowerCase().replace(/['".,\/\^&\*;:!\?#\$%{}=\-_`~()]/g,' ').replace(/\s{2,}/g,' ').trim() is check.journal.toLowerCase().replace(/['".,\/\^&\*;:!\?#\$%{}=\-_`~()]/g,' ').replace(/\s{2,}/g,' ').trim())
-    _get.metadata(crs) if crs?
-    if crs?.url? and crs.redirect isnt false and crs.licence? and crs.licence.indexOf('creativecommons') isnt -1
-      res.url = crs.redirect ? crs.url
-      res.found.crossref = res.url
-
-  #_get.citation = () ->
-  # citation parser could be separated from reverse lookup above,
-  # or could actually run a citation parser on the incoming string
-  # but for now, pulling the title and using the above seems to be working well enough
-
   _get.bing = () ->
     API.settings.service.openaccessbutton.resolve.bing = {max:10000,cap:'30days'} if API.settings?.service?.openaccessbutton?.resolve?.bing is true
     cap = if API.settings?.service?.openaccessbutton?.resolve?.bing?.cap? then API.job.cap(API.settings.service.openaccessbutton?.resolve?.bing?.max ? 10000, API.settings.service.openaccessbutton?.resolve?.bing?.cap ? '30days','oabutton_bing') else undefined
@@ -435,17 +400,6 @@ API.service.oab.find = (options={}, metadata={}, content) ->
           catch
             options.url = bing.data[0].url.replace(/"/g,'')
           metadata.pmid = options.url.replace(/\/$/,'').split('/').pop() if options.url.indexOf('pubmed.ncbi') isnt -1
-
-  _get.journal = () ->
-    dres = API.use.doaj.journals.search(if metadata.issn then 'issn:"'+metadata.issn+'"' else 'bibjson.journal.title:"'+metadata.journal+'"')
-    res.checked.push('doaj') if 'doaj' not in res.checked
-    if dres?.results?.length > 0
-      for ju in dres.results[0].bibjson.link
-        if ju.type is 'homepage'
-          _get.metadata API.use.doaj.articles.format dres.results[0]
-          res.journal = ju.url
-          res.found.doaj = ju.url
-          break
 
   _get.content = () ->
     _get.metadata API.service.oab.scrape undefined, content 
@@ -479,7 +433,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
           # crossref title lookup can accept full metadata object to compare additional metadata possibly in a citation
           if which is 'title'
             if options.citation?
-              mq = _.clone metadata
+              mq = JSON.parse JSON.stringify metadata
               mq.citation = options.citation
             else
               mq = metadata.title
@@ -493,8 +447,6 @@ API.service.oab.find = (options={}, metadata={}, content) ->
             delete options.doi
         else if src is 'epmc'
           rs = API.use.europepmc[if which is 'id' then (if metadata.pmcid then 'pmc' else 'pmid') else which] (if which is 'id' then (metadata.pmcid ? metadata.pmid) else metadata[which]), true
-        else if src is 'doaj' and which in ['doi','title']
-          rs = API.use.doaj.articles[which] metadata[which]
         else if typeof API.use[src]?[which] is 'function' and metadata[which]?
           # other possible sources to check title or doi are ['base','dissemin','share','core','openaire','fighsare'] 
           # but we do not use them by default any more
@@ -524,8 +476,8 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       _running[src+which] = true
       Meteor.setTimeout (() -> _run src, which), 1
   _loop = () ->
-    dd = _.clone done
-    md = _.clone metadata
+    dd = JSON.parse JSON.stringify done
+    md = JSON.parse JSON.stringify metadata
 
     if not catalogued?
       ul = used.length
@@ -542,7 +494,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       if metadata.doi and not done.dois
         done.dois = true
         for src in res.sources
-          _prl(src, 'doi') if src not in ['oabutton','reverse','scrape','bing']
+          _prl(src, 'doi') if src not in ['oabutton','scrape','bing']
       else if (metadata.pmcid or metadata.pmid) and not done.epmcid
         done.epmcid = true
         _prl('epmc','id')
@@ -550,10 +502,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
         if typeof metadata.title is 'string' and metadata.title.length > 8 and metadata.title.split(' ').length > 2 and not done.titles
           done.titles = true
           for src in res.sources
-            _prl(src, 'title') if src not in ['oadoi','oabutton','catalogue','reverse','scrape','bing']
-        else if not done.reverse and 'reverse' in res.sources and ((typeof metadata.title is 'string' and metadata.title.length > 8 and metadata.title.split(' ').length > 2) or options.citation)
-          done.reverse = true
-          _run 'reverse'
+            _prl(src, 'title') if src not in ['oadoi','oabutton','catalogue','scrape','bing']
         else if (not metadata.pmcid and not metadata.pmid) or done.epmcid
           if not metadata.title or (done.titles and (done.bing or not options.bing or 'bing' not in res.sources))
             if not done.content and content
@@ -569,10 +518,6 @@ API.service.oab.find = (options={}, metadata={}, content) ->
     if metadata.doi and options.permissions and not done.permissions
       done.permissions = true
       _prl 'permissions'
-
-    if not done.journal and (metadata.journal or metadata.issn) and 'journal' in res.sources and res.find and not res.url and not res.journal and (not metadata.doi or done.dois) and (not metadata.title or done.titles)
-      done.journal = true
-      _prl 'journal'
 
     if metadata.doi
       for rn of _running
@@ -601,18 +546,20 @@ API.service.oab.find = (options={}, metadata={}, content) ->
         oab_catalogue.update id, data
       else
         fnd.catalogue = oab_catalogue.insert data
-    fndc = _.clone fnd
+    fndc = JSON.parse JSON.stringify fnd
     delete fnd.permissions # don't store permissions in finds, only in catalogue
     oab_find.insert fnd
   _sv = (id, data, fnd) -> Meteor.setTimeout (() -> _save(id, data, fnd)), 1
 
   # certain user-provided search values are allowed to override any that we could find ourselves, and we note that we got these from the user
-  for uo in ['title','journal','year','doi']
-    if options[uo] and options[uo].length and options[uo] isnt metadata[uo]
-      res.usermetadata ?= catalogued?.usermetadata ? {}
-      res.usermetadata[uo] ?= []
-      res.usermetadata[uo].push {previous: metadata[uo], provided: options[uo], uid: options.uid, createdAt: Date.now()}
-      metadata[uo] = options[uo]
+  if options.usermetadata
+    for uo in ['title','journal','year','doi']
+      if not options.citation and options[uo] and options[uo].length and options[uo] isnt metadata[uo]
+        if not (uo in ['title','year'] and not (options[if uo is 'title' then 'year' else 'title'] or options.journal or options.doi)) # but only accept title if given something else
+          res.usermetadata ?= catalogued?.usermetadata ? {}
+          res.usermetadata[uo] ?= []
+          res.usermetadata[uo].push {previous: metadata[uo], provided: options[uo], uid: options.uid, createdAt: Date.now()}
+          metadata[uo] = options[uo]
 
   metadata.url ?= []
   metadata.url = [metadata.url] if typeof metadata.url is 'string'
@@ -641,7 +588,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       upd = {}
       upd.url = res.url if res.url? and res.url isnt catalogued.url
       if not _.isEqual metadata, catalogued.metadata
-        upd.metadata = _.clone metadata
+        upd.metadata = JSON.parse JSON.stringify metadata
         for m of catalogued.metadata
           upd.metadata[m] ?= catalogued.metadata[m]
         for cu in (if typeof catalogued.metadata?.url is 'string' then [catalogued.metadata.url] else if _.isArray(catalogued.metadata?.url) then catalogued.metadata.url else [])
@@ -650,7 +597,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       uc = _.union res.checked, catalogued.checked
       upd.checked = uc if JSON.stringify(uc.sort()) isnt JSON.stringify catalogued.checked.sort()
       if not _.isEmpty res.found
-        upd.found = _.clone res.found
+        upd.found = JSON.parse JSON.stringify res.found
         for cf of catalogued.found
           upd.found[cf] ?= catalogued.found[cf]
       upd.permissions = res.permissions if res.permissions? and not res.permissions.error? and (not catalogued.permissions? or not _.isEqual res.permissions, catalogued.permissions)
@@ -678,3 +625,140 @@ API.service.oab.find = (options={}, metadata={}, content) ->
 
 
 
+#Yi-Jeng Chen. (2016). Young Children's Collaboration on the Computer with Friends and Acquaintances. Journal of Educational Technology & Society, 19(1), 158-170. Retrieved November 19, 2020, from http://www.jstor.org/stable/jeductechsoci.19.1.158
+#Baker, T. S., Eisenberg, D., & Eiserling, F. (1977). Ribulose Bisphosphate Carboxylase: A Two-Layered, Square-Shaped Molecule of Symmetry 422. Science, 196(4287), 293-295. doi:10.1126/science.196.4287.293
+API.service.oab.citation = (citation) ->
+  rs = if typeof citation is 'object' then citation else {}
+  if typeof citation is 'string'
+    try
+      rs = JSON.parse options.citation
+    catch
+      citation = citation.replace(/citation\:/gi,'').trim()
+      citation = citation.split('title')[1].trim() if citation.indexOf('title') isnt -1
+      citation = citation.replace(/^"/,'').replace(/^'/,'').replace(/"$/,'').replace(/'$/,'')
+      rs.doi = citation.split('doi:')[1].split(',')[0].split(' ')[0].trim() if citation.indexOf('doi:') isnt -1
+      rs.doi = citation.split('doi.org/')[1].split(',')[0].split(' ')[0].trim() if citation.indexOf('doi.org/') isnt -1
+      if not rs.doi and citation.indexOf('http') isnt -1
+        rs.url = 'http' + citation.split('http')[1].split(' ')[0].trim()
+      try
+        if citation.indexOf('|') isnt -1 or citation.indexOf('}') isnt -1
+          rs.title = citation.split('|')[0].split('}')[0].trim()
+        if citation.split('"').length > 2
+          rs.title = citation.split('"')[1].trim()
+        else if citation.split("'").length > 2
+          rs.title ?= citation.split("'")[1].trim()
+      try
+        pts = citation.replace(/,\./g,' ').split ' '
+        for pt in pts
+          if not rs.year
+            pt = pt.replace /[^0-9]/g,''
+            if pt.length is 4
+              sy = parseInt pt
+              rs.year = sy if typeof sy is 'number' and not isNaN sy
+      try
+        if not rs.title and rs.year and citation.indexOf(rs.year) < (citation.length/4)
+          rs.title = citation.split(rs.year)[1].trim()
+          rs.title = rs.title.replace(')','') if rs.title.indexOf('(') is -1 or rs.title.indexOf(')') < rs.title.indexOf('(')
+          rs.title = rs.title.replace('.','') if rs.title.indexOf('.') < 3
+          rs.title = rs.title.replace(',','') if rs.title.indexOf(',') < 3
+          rs.title = rs.title.trim()
+          if rs.title.indexOf('.') isnt -1
+            rs.title = rs.title.split('.')[0]
+          else if rs.title.indexOf(',') isnt -1
+            rs.title = rs.title.split(',')[0]
+      if rs.title
+        try
+          bt = citation.split(rs.title)[0]
+          bt = bt.split(rs.year)[0] if rs.year and bt.indexOf(rs.year) isnt -1
+          bt = bt.split(rs.url)[0] if rs.url and bt.indexOf(rs.url) > 0
+          bt = bt.replace(rs.url) if rs.url and bt.indexOf(rs.url) is 0
+          bt = bt.replace(rs.doi) if rs.doi and bt.indexOf(rs.doi) is 0
+          bt = bt.replace('.','') if bt.indexOf('.') < 3
+          bt = bt.replace(',','') if bt.indexOf(',') < 3
+          bt = bt.substring(0,bt.lastIndexOf('(')) if bt.lastIndexOf('(') > (bt.length-3)
+          bt = bt.substring(0,bt.lastIndexOf(')')) if bt.lastIndexOf(')') > (bt.length-3)
+          bt = bt.substring(0,bt.lastIndexOf(',')) if bt.lastIndexOf(',') > (bt.length-3)
+          bt = bt.substring(0,bt.lastIndexOf('.')) if bt.lastIndexOf('.') > (bt.length-3)
+          bt = bt.trim()
+          if bt.length > 6
+            if bt.indexOf(',') isnt -1
+              rs.author = []
+              rs.author.push({name: ak}) for ak in bt.split(',')
+            else
+              rs.author = [{name: bt}]
+        try
+          rmn = citation.split(rs.title)[1]
+          rmn = rmn.replace(rs.url) if rs.url and rmn.indexOf(rs.url) isnt -1
+          rmn = rmn.replace(rs.doi) if rs.doi and rmn.indexOf(rs.doi) isnt -1
+          rmn = rmn.replace('.','') if rmn.indexOf('.') < 3
+          rmn = rmn.replace(',','') if rmn.indexOf(',') < 3
+          rmn = rmn.trim()
+          if rmn.length > 6
+            rs.journal = rmn
+            rs.journal = rs.journal.split(',')[0].replace(/in /gi,'').trim() if rmn.indexOf(',') isnt -1
+            rs.journal = rs.journal.replace('.','') if rs.journal.indexOf('.') < 3
+            rs.journal = rs.journal.replace(',','') if rs.journal.indexOf(',') < 3
+            rs.journal = rs.journal.trim()
+      try
+        if rs.journal
+          rmn = citation.split(rs.journal)[1]
+          rmn = rmn.replace(rs.url) if rs.url and rmn.indexOf(rs.url) isnt -1
+          rmn = rmn.replace(rs.doi) if rs.doi and rmn.indexOf(rs.doi) isnt -1
+          rmn = rmn.replace('.','') if rmn.indexOf('.') < 3
+          rmn = rmn.replace(',','') if rmn.indexOf(',') < 3
+          rmn = rmn.trim()
+          if rmn.length > 4
+            rmn = rmn.split('retrieved')[0] if rmn.indexOf('retrieved') isnt -1
+            rmn = rmn.split('Retrieved')[0] if rmn.indexOf('Retrieved') isnt -1
+            rs.volume = rmn
+            if rs.volume.indexOf('(') isnt -1
+              rs.volume = rs.volume.split('(')[0]
+              rs.volume = rs.volume.trim()
+              try
+                rs.issue = rmn.split('(')[1].split(')')[0]
+                rs.issue = rs.issue.trim()
+            if rs.volume.indexOf(',') isnt -1
+              rs.volume = rs.volume.split(',')[0]
+              rs.volume = rs.volume.trim()
+              try
+                rs.issue = rmn.split(',')[1]
+                rs.issue = rs.issue.trim()
+            if rs.volume
+              try
+                delete rs.volume if isNaN parseInt rs.volume
+            if rs.issue
+              if rs.issue.indexOf(',') isnt -1
+                rs.issue = rs.issue.split(',')[0].trim()
+              try
+                delete rs.issue if isNaN parseInt rs.issue
+            if rs.volume and rs.issue
+              try
+                rmn = citation.split(rs.journal)[1]
+                rmn = rmn.split('retriev')[0] if rmn.indexOf('retriev') isnt -1
+                rmn = rmn.split('Retriev')[0] if rmn.indexOf('Retriev') isnt -1
+                rmn = rmn.split(rs.url)[0] if rs.url and rmn.indexOf(rs.url) isnt -1
+                rmn = rmn.split(rs.doi)[0] if rs.doi and rmn.indexOf(rs.doi) isnt -1
+                rmn = rmn.substring(rmn.indexOf(rs.volume)+(rs.volume+'').length)
+                rmn = rmn.substring(rmn.indexOf(rs.issue)+(rs.issue+'').length)
+                rmn = rmn.replace('.','') if rmn.indexOf('.') < 2
+                rmn = rmn.replace(',','') if rmn.indexOf(',') < 2
+                rmn = rmn.replace(')','') if rmn.indexOf(')') < 2
+                rmn = rmn.trim()
+                if not isNaN parseInt rmn.substring(0,1)
+                  rs.pages = rmn.split(' ')[0].split('.')[0].trim()
+                  rs.pages = rs.pages.split(', ')[0] if rs.pages.length > 5
+      if not rs.author and citation.indexOf('et al') isnt -1
+        cn = citation.split('et al')[0].trim()
+        if citation.indexOf(cn) is 0
+          rs.author = [{name: cn + 'et al'}]
+      if rs.title and not rs.volume
+        try
+          clc = citation.split(rs.title)[1].toLowerCase().replace('volume','vol').replace('vol.','vol').replace('issue','iss').replace('iss.','iss').replace('pages','page').replace('pp','page')
+          if clc.indexOf('vol') isnt -1
+            rs.volume = clc.split('vol')[1].split(',')[0].split('(')[0].split('.')[0].split(' ')[0].trim()
+          if not rs.issue and clc.indexOf('iss') isnt -1
+            rs.issue = clc.split('iss')[1].split(',')[0].split('.')[0].split(' ')[0].trim()
+          if not rs.pages and clc.indexOf('page') isnt -1
+            rs.pages = clc.split('page')[1].split('.')[0].split(', ')[0].split(' ')[0].trim()
+
+  return rs

@@ -143,14 +143,14 @@ API.add 'service/oab/receive/:rid/:holdrefuse',
 
 
 
-API.service.oab.deposit = (d,options={},files,uid) ->
+API.service.oab.deposit = (d, options={}, files, uid) ->
   options = API.tdm.clean options
   if typeof d is 'string' # a catalogue ID
     d = oab_catalogue.get d
   else
     d = oab_catalogue.finder options.metadata ? options
-    if not d?
-      fnd = API.service.oab.find d ? options.metadata ? options # this will create a catalogue record out of whatever is provided, and also checks to see if thing is available already
+    if not d? and options.metadata?
+      fnd = API.service.oab.find options.metadata # this will create a catalogue record out of whatever is provided, and also checks to see if thing is available already
       d = oab_catalogue.get fnd.catalogue
   return 400 if not d?
 
@@ -168,9 +168,11 @@ API.service.oab.deposit = (d,options={},files,uid) ->
   dep.name = (files[0].filename ? files[0].name) if files? and files.length
   dep.email = options.email if options.email
   dep.from = options.from if options.from
-  dep.from ?= uid if uid
+  dep.from = uid if uid and (not dep.from? or dep.from is 'anonymous')
   dep.plugin = options.plugin if options.plugin
   dep.confirmed = decodeURIComponent(options.confirmed) if options.confirmed
+
+  uc = if options.config? then options.config else if dep.from? and dep.from isnt 'anonymous' then API.service.oab.deposit.config(dep.from) else false
 
   perms = API.service.oab.permissions d, files, undefined, dep.confirmed # if confirmed is true the submitter has confirmed this is the right file. If confirmed is the checksum this is a resubmit by an admin
   if perms.file?.archivable and ((dep.confirmed? and dep.confirmed is perms.file.checksum) or not dep.confirmed) #or (dep.confirmed and API.settings.dev)) # if the depositor confirms we don't deposit, we manually review - only deposit on admin confirmation (but on dev allow it)
@@ -220,12 +222,11 @@ API.service.oab.deposit = (d,options={},files,uid) ->
       meta['access_right'] = 'embargoed'
       meta['embargo_date'] = perms.permissions.embargo # check date format required by zenodo
     try meta['publication_date'] = d.metadata.published if d.metadata.published? and typeof d.metadata.published is 'string'
-    if dep.from and (options.community or uc = API.service.oab.deposit.config dep.from)
-      if options.community
-        uc ?= {}
-        uc.communities = []
-        uc.communities.push({identifier: ccm}) for ccm in options.community.split ','
-      uc.community = uc.community_ID if uc?.community_ID? and not uc?.community?
+    if uc isnt false
+      uc.community = uc.community_ID if uc.community_ID? and not uc.community?
+      if uc.community
+        uc.communities ?= []
+        uc.communities.push({identifier: ccm}) for ccm in (if typeof uc.community is 'string' then uc.community.split(',') else uc.community)
       if uc.community? or uc.communities?
         uc.communities ?= uc.community
         uc.communities = [uc.communities] if typeof uc.communities is 'string'
@@ -266,10 +267,10 @@ API.service.oab.deposit = (d,options={},files,uid) ->
   #  bcc = tos
   #  tos = []
   tos = []
-  if options.from and options.from isnt 'anonymous'
-    try
-      iacc = API.accounts.retrieve options.from
-      tos.push iacc.email ? iacc.emails[0].address # the institutional user may set a config value to use as the contact email address but for now it is the account address
+  if typeof uc?.owner is 'string' and uc.owner.indexOf('@') isnt -1
+    tos.push uc.owner
+  else if dep.from and dep.from isnt 'anonymous' and iacc = API.accounts.retrieve dep.from
+    try tos.push iacc.email ? iacc.emails[0].address # the institutional user may set a config value to use as the contact email address but for now it is the account address
   if tos.length is 0
     tos = _.clone bcc
     bcc = []

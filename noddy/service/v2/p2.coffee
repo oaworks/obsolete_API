@@ -68,9 +68,7 @@ API.add 'service/oab/p2/affiliation/:rororid', # could also be a two letter coun
     else if a = oab_permissions.find 'issuer.id': this.urlParams.rororid
       return a
     else
-      # look up the ROR in wikidata - if found, get the qid from the P17 country snak, look up that country qid
-      # get the P297 ISO 3166-1 alpha-2 code, search affiliations for that
-      return false
+      return API.service.oab.permissions {affiliation: this.urlParams.rororid, publisher: this.queryParams.publisher, doi: this.queryParams.doi, issn: this.queryParams.issn}
 
 API.add 'service/oab/p2/import',
   get: 
@@ -85,15 +83,16 @@ API.add 'service/oab/p2/test', get: () -> return API.service.oab.permission.test
 API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
   overall_policy_restriction = false
   cr = false
+  haddoi = false
   
   _prep = (rec) ->
-    if rec.embargo_months and (meta.published or meta.year)
+    if haddoi and rec.embargo_months and (meta.published or meta.year)
       em = moment meta.published ? meta.year + '-01-01'
       em = em.add rec.embargo_months, 'months'
       #if em.isAfter moment() # changed 09112020 by JM request to always add embargo_end if we can calculate it, even if it is in the past.
       rec.embargo_end = em.format "YYYY-MM-DD"
     delete rec.embargo_end if rec.embargo_end is ''
-    rec.copyright_name = if rec.copyright_owner is 'publisher' then (if typeof rec.issuer.id is 'string' then rec.issuer.id else rec.issuer.id[0]) else if rec.copyright_owner in ['journal','affiliation'] then (meta.journal ? '') else if (rec.copyright_owner and rec.copyright_owner.toLowerCase().indexOf('author') isnt -1) and meta.author? and meta.author.length and (meta.author[0].name or meta.author[0].family) then (meta.author[0].name ? meta.author[0].family) + (if meta.author.length > 1 then ' et al' else '') else ''
+    rec.copyright_name = if rec.copyright_owner is 'publisher' then (if typeof rec.issuer.parent_policy is 'string' then rec.issuer.parent_policy else if typeof rec.issuer.id is 'string' then rec.issuer.id else rec.issuer.id[0]) else if rec.copyright_owner in ['journal','affiliation'] then (meta.journal ? '') else if (rec.copyright_owner and rec.copyright_owner.toLowerCase().indexOf('author') isnt -1) and meta.author? and meta.author.length and (meta.author[0].name or meta.author[0].family) then (meta.author[0].name ? meta.author[0].family) + (if meta.author.length > 1 then ' et al' else '') else ''
     if rec.copyright_name in ['publisher','journal'] and (cr or meta.doi or rec.provenance?.example)
       if cr is false
         cr = API.use.crossref.works.doi meta.doi ? rec.provenance.example
@@ -102,10 +101,11 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
           if a.name.toLowerCase() is 'copyright'
             try rec.copyright_name = a.value
             try rec.copyright_name = a.value.replace('\u00a9 ','').replace(/[0-9]/g,'').trim()
-    rec.copyright_year = meta.year if rec.copyright_year is '' and meta.year
+    rec.copyright_year = meta.year if haddoi and rec.copyright_year is '' and meta.year
+    delete rec.copyright_year if rec.copyright_year is ''
     #for ds in ['copyright_name','copyright_year']
     #  delete rec[ds] if rec[ds] is ''
-    if rec.deposit_statement? and rec.deposit_statement.indexOf('<<') isnt -1
+    if haddoi and rec.deposit_statement? and rec.deposit_statement.indexOf('<<') isnt -1
       fst = ''
       for pt in rec.deposit_statement.split '<<'
         if fst is '' and pt.indexOf('>>') is -1
@@ -139,6 +139,7 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
 
   _score = (rec) ->
     score = if rec.can_archive then 1000 else 0
+    score += 1000 if rec.provenance?.oa_evidence is 'In DOAJ'
     if rec.requirements?
       # TODO what about cases where the requirement is met?
       # and HOW is requirement met? we search ROR against issuer, but how does that match with author affiliation?
@@ -151,6 +152,7 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
     score += if rec.issuer?.type is 'journal' then 5 else if rec.issuer?.type is 'publisher' then 4 else if rec.issuer?.type is 'university' then 3 else if rec.issuer?.type in 'article' then 2 else 0
     score -= 25 if rec.embargo_months and rec.embargo_months >= 36 and (not rec.embargo_end or moment(rec.embargo_end,"YYYY-MM-DD").isBefore(moment()))
     return score
+
 
   inp = {}
   if typeof meta is 'string'
@@ -169,7 +171,9 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
     # it is possible this may actually be a ror, so switch to ror just in case - if it still matches nothing, no loss
     meta.ror = meta.publisher
     delete meta.publisher
-  
+
+  issns = if _.isArray(meta.issn) then meta.issn else [] # only if directly passed a list of ISSNs for the same article, accept them as the ISSNs list to use
+  meta.issn = meta.issn.split(',') if typeof meta.issn is 'string' and meta.issn.indexOf(',') isnt -1
   meta.ror = meta.ror.split(',') if typeof meta.ror is 'string' and meta.ror.indexOf(',') isnt -1
   
   ror = meta.ror ? false
@@ -178,13 +182,13 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
     if (typeof uc is 'object' and uc.ror?) or typeof roruid is 'string'
       ror = uc?.ror ? roruid
 
-  if _.isEmpty(meta) or (meta.issn and (typeof meta.issn isnt 'string' or meta.issn.length < 5 or meta.issn.indexOf('-') is -1)) or (meta.doi and (typeof meta.doi isnt 'string' or meta.doi.indexOf('10.') isnt 0 or meta.doi.indexOf('/') is -1))
+  if _.isEmpty(meta) or (meta.issn and JSON.stringify(meta.issn).indexOf('-') is -1) or (meta.doi and (typeof meta.doi isnt 'string' or meta.doi.indexOf('10.') isnt 0 or meta.doi.indexOf('/') is -1))
     return body: 'No valid DOI, ISSN, or ROR provided', statusCode: 404
     
   # NOTE later will want to find affiliations related to the authors of the paper, but for now only act on affiliation provided as a ror
   # we now always try to get the metadata because joe wants to serve a 501 if the doi is not a journal article
-  if getmeta isnt false and meta.doi and (not meta.publisher or not meta.issn)
-    psm = _.clone meta
+  _getmeta = () ->
+    psm = JSON.parse JSON.stringify meta
     delete psm.ror
     if not _.isEmpty psm
       try
@@ -192,42 +196,33 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
         for mk of rsm
           if mk not in ['ror']
             meta[mk] ?= rsm[mk]
+  _getmeta() if getmeta isnt false and meta.doi and (not meta.publisher or not meta.issn)
   meta.published = meta.year + '-01-01' if not meta.published and meta.year
-  issns = []
-  haddoi = meta.doi?
+  haddoi = meta.doi
   af = false
-  doiex = false
   if meta.issn
     meta.issn = [meta.issn] if typeof meta.issn is 'string'
-    for inisn in meta.issn
-      issns.push inisn
-    if af = academic_journal.find 'issn.exact:"' + issns.join('" OR issn.exact:"') + '"'
-      meta.publisher ?= af.publisher
-      meta.doi ?= af.example
-      for an in (if typeof af.issn is 'string' then [af.issn] else af.issn)
-        issns.push(an) if an not in issns
-    if not meta.doi?
-      for alti in issns
-        if doiex = API.use.crossref.journals.dois.example alti
-          meta.doi = doiex
-          break
-    if not meta.doi?
-      # we still really can't find one, so query crossref works API for a result, which may be slow
-      # later this will be a local lookup once we cache it all
-      for ani in issns
-        fncr = API.use.crossref.works.search {issn: ani}, undefined, 1, 'type:journal-article'
-        if fncr?.data? and fncr.data.length
-          meta.publisher ?= fncr.data[0].publisher
-          meta.doi = fncr.data[0].DOI
-          for crisn in fncr.data[0].ISSN ? []
-            for lcrisn in (if typeof crisn is 'string' then [crisn] else crisn)
-              issns.push(lcrisn) if lcrisn not in issns
-          break
+    if not issns.length # they're already meta.issn in this case anyway
+      for inisn in meta.issn
+        issns.push(inisn) if inisn not in issns # check just in case
+    if not issns.length or not meta.publisher or not meta.doi
+      if af = academic_journal.find 'issn.exact:"' + issns.join('" OR issn.exact:"') + '"'
+        meta.publisher ?= af.publisher
+        for an in (if typeof af.issn is 'string' then [af.issn] else af.issn)
+          issns.push(an) if an not in issns # check again
+        meta.doi ?= af.doi
+    meta.doi ?= API.use.crossref.journals.doi issns
+    _getmeta() if not haddoi and meta.doi
   if haddoi and meta.crossref_type not in ['journal-article']
     return
       body: 'DOI is not a journal article'
       status: 501
-  
+
+  if meta.publisher and meta.publisher.indexOf('(') isnt -1 and meta.publisher.lastIndexOf(')') > (meta.publisher.length*.7)
+    # could be a publisher name with the acronym at the end, like Public Library of Science (PLoS)
+    # so get rid of the acronym because that is not included in the publisher name in crossref and other sources
+    meta.publisher = meta.publisher.substring(0, meta.publisher.lastIndexOf('(')).trim()
+
   try
     meta.citation = '['
     meta.citation += meta.title + '. ' if meta.title
@@ -236,7 +231,7 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
     meta.citation += meta.issue + ' ' if meta.issue
     meta.citation += 'p' + (meta.page ? meta.pages) if meta.page? or meta.pages?
     if meta.year or meta.published
-      meta.citation += ' (' + (meta.year ? meta.published.split('-')[0]) + ')'
+      meta.citation += ' (' + (meta.year ? meta.published).split('-')[0] + ')'
     meta.citation = meta.citation.trim()
     meta.citation += ']'
 
@@ -245,6 +240,21 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
   if meta.ror?
     meta.ror = [meta.ror] if typeof meta.ror is 'string'
     rs = oab_permissions.search 'issuer.id.exact:"' + meta.ror.join('" OR issuer.id.exact:"') + '"'
+    if not rs?.hits?.total
+      # look up the ROR in wikidata - if found, get the qid from the P17 country snak, look up that country qid
+      # get the P297 ISO 3166-1 alpha-2 code, search affiliations for that
+      if rwd = wikidata_record.find 'snaks.property.exact:"P6782" AND snaks.property.exact:"P17" AND (snaks.value.exact:"' + meta.ror.join(" OR snaks.value.exact:") + '")'
+        snkd = false
+        for snak in rwd.snaks
+          if snkd
+            break
+          else if snak.property is 'P17'
+            if cwd = wikidata_record.get snak.qid
+              for sn in cwd.snaks
+                if sn.property is 'P297'
+                  snkd = true
+                  rs = oab_permissions.search 'issuer.id.exact:"' + sn.value + '"'
+                  break
     for rr in rs?.hits?.hits ? []
       tr = _prep rr._source
       tr.score = _score tr
@@ -261,30 +271,40 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
         rp = _prep p._source
         rp.score = _score rp
         perms.all_permissions.push rp
-  
+
+  if perms.all_permissions.length is 0 and meta.publisher and not meta.doi and not issns.length
+    af = academic_journal.find 'publisher:"' + meta.publisher + '"'
+    if not af?
+      fz = academic_journal.find 'publisher:"' + meta.publisher.split(' ').join(' AND publisher:"') + '"'
+      if fz.publisher is meta.publisher
+        af = fz
+      else
+        lvs = API.tdm.levenshtein fz.publisher, meta.publisher, true
+        longest = if lvs.length.a > lvs.length.b then lvs.length.a else lvs.length.b
+        af = fz if lvs.distance < 5 or longest/lvs.distance > 10
+    if typeof af is 'object' and af.is_oa
+      pisoa = academic_journal.count('publisher:"' + af.publisher + '"') is academic_journal.count('publisher:"' + af.publisher + '" AND is_oa:true')
+    af = false if not af.is_oa or not pisoa
+
   if typeof af is 'object' and af.is_oa isnt false
     af.is_oa = true if not af.is_oa? and ('doaj' in af.src or af.wikidata_in_doaj)
-    # using oadoi to check OA if not in doaj has been disabled for now as their requirements don't yet match what we need.
-    # so no use running the extra is_oa check here yet
-    if not af.is_oa? and false #coa = API.service.academic.journal.is_oa issns, meta.doi
-      af = coa
     if af.is_oa
       altoa =
         can_archive: true
         version: 'publishedVersion'
-        versions: []
+        versions: ['publishedVersion']
         licence: undefined
         licence_terms: ""
         licences: []
         locations: ['institutional repository']
         embargo_months: undefined
         issuer:
-          type: 'article'
+          type: 'journal'
           has_policy: 'yes'
-          id: oad?.doi
+          id: af.issn
         meta:
-          creator: ['support@unpaywall.org']
-          contributors: ['support@unpaywall.org']
+          creator: ['joe+doaj@openaccessbutton.org']
+          contributors: ['joe+doaj@openaccessbutton.org']
           monitoring: 'Automatic'
 
       try altoa.licence = af.license[0].type # could have doaj licence info
@@ -292,14 +312,6 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
       if 'doaj' in af.src or af.wikidata_in_doaj
         altoa.embargo_months = 0
         altoa.provenance = {oa_evidence: 'In DOAJ'}
-      ''' turns out we can't rely on unpaywall journal_is_oa as meaning it is OA with a suitable licence, so don't use this
-      if not altoa.licence and meta.doi and oadoi = API.use.oadoi.doi meta.doi, false
-        if oadoi.journal_is_oa and oadoi.best_oa_location?
-          # due to https://github.com/OAButton/discussion/issues/1516#issuecomment-725282855
-          altoa.licence = oadoi.best_oa_location.license ? 'cc-by-nc-nd'
-          altoa.provenance = {oa_evidence: oadoi.best_oa_location.evidence} if oadoi.best_oa_location.evidence?
-          altoa.meta.updated = oadoi.best_oa_location.updated if oadoi.best_oa_location.updated?
-          altoa.version = oadoi.best_oa_location.version if oadoi.best_oa_location.version?'''
       if typeof altoa.licence is 'string'
         altoa.licence = altoa.licence.toLowerCase().trim()
         if altoa.licence.indexOf('cc') is 0
@@ -312,10 +324,38 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
         delete altoa.licence
       if altoa.licence
         altoa.licences = [{type: altoa.licence, terms: ""}]
-      if altoa.version
-        altoa.versions = if altoa.version in ['submittedVersion','preprint'] then ['submittedVersion'] else if altoa.version in ['acceptedVersion','postprint'] then ['submittedVersion', 'acceptedVersion'] else  ['submittedVersion', 'acceptedVersion', 'publishedVersion']
       altoa.score = _score altoa
       perms.all_permissions.push altoa
+
+  if haddoi and meta.doi and oadoi = API.use.oadoi.doi meta.doi, false
+    # use oadoi for specific doi
+    if oadoi?.best_oa_location?.license and oadoi.best_oa_location.license.indexOf('cc') isnt -1
+      doa =
+        can_archive: true
+        version: oadoi.best_oa_location.version
+        versions: []
+        licence: oadoi.best_oa_location.license
+        licence_terms: ""
+        licences: []
+        locations: ['institutional repository']
+        issuer:
+          type: 'article'
+          has_policy: 'yes'
+          id: meta.doi
+        meta:
+          creator: ['support@unpaywall.org']
+          contributors: ['support@unpaywall.org']
+          monitoring: 'Automatic'
+          updated: oadoi.best_oa_location.updated
+        provenance:
+          oa_evidence: oadoi.best_oa_location.evidence
+
+      if typeof doa.licence is 'string'
+        doa.licences = [{type: doa.licence, terms: ""}]
+      if doa.version
+        doa.versions = if doa.version in ['submittedVersion','preprint'] then ['submittedVersion'] else if doa.version in ['acceptedVersion','postprint'] then ['submittedVersion', 'acceptedVersion'] else  ['submittedVersion', 'acceptedVersion', 'publishedVersion']
+      doa.score = _score doa
+      perms.all_permissions.push doa
 
   # sort rors by score, and sort alts by score, then combine
   if perms.all_permissions.length
@@ -323,10 +363,10 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
     # note if enforcement_from is after published date, don't apply the permission. If no date, the permission applies to everything
     for wp in perms.all_permissions
       if not wp.provenance?.enforcement_from
-        perms.best_permission = _.clone wp
+        perms.best_permission = JSON.parse JSON.stringify wp
         break
       else if not meta.published or moment(meta.published,'YYYY-MM-DD').isAfter(moment(wp.provenance.enforcement_from,'DD/MM/YYYY'))
-        perms.best_permission = _.clone wp
+        perms.best_permission = JSON.parse JSON.stringify wp
         break
     if rors.length
       rors = _.sortBy(rors, 'score').reverse()
@@ -335,7 +375,7 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
         if not perms.best_permission?.author_affiliation_requirement?
           if perms.best_permission?
             if not ro.provenance?.enforcement_from or not meta.published or moment(meta.published,'YYYY-MM-DD').isAfter(moment(ro.provenance.enforcement_from,'DD/MM/YYYY'))
-              pb = perms.best_permission
+              pb = JSON.parse JSON.stringify perms.best_permission
               for key in ['licences', 'versions', 'locations']
                 for vl in ro[key]
                   pb[key] ?= []
@@ -347,15 +387,22 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
                 if ro.embargo_end
                   if moment(ro.embargo_end,"YYYY-MM-DD").isBefore(moment(pb.embargo_end,"YYYY-MM-DD"))
                     pb.embargo_end = ro.embargo_end
+              if pb.embargo_months and ro.embargo_months? and ro.embargo_months < pb.embargo_months
+                pb.embargo_months = ro.embargo_months
               pb.can_archive = true if ro.can_archive is true
               pb.requirements ?= {}
-              pb.requirements.author_affiliation_requirement = ro.issuer.id
-              pb.affiliation = ro.issuer
-          #else
-            # can the best affiliation permission be the best permission by itself?
-            #perms.best_permission = ro # No it can't
+              pb.requirements.author_affiliation_requirement = if not meta.ror? then ro.issuer.id else if typeof meta.ror is 'string' then meta.ror else meta.ror[0]
+              pb.issuer.affiliation = ro.issuer
+              pb.meta ?= {}
+              pb.meta.affiliation = ro.meta
+              pb.provenance ?= {}
+              pb.provenance.affiliation = ro.provenance
+              pb.score = parseInt(pb.score) + parseInt(ro.score)
+              perms.best_permission = pb
+              perms.all_permissions.push pb
 
   if file? or url?
+    # TODO file usage on new permissions API is still to be re-written
     # is it possible file will already have been processed, if so can this step be shortened or avoided?
     perms.file = API.service.oab.permission.file file, url, confirmed
     try perms.lantern = API.service.lantern.licence('https://doi.org/' + meta.doi) if not perms.file?.licence and meta.doi? and 'doi.org' not in url
@@ -376,23 +423,6 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
         f.archivable_reason = 'We believe this is a ' + perms.file.version + ' and our permission system says that version can be shared'
       else
         f.archivable_reason ?= 'We believe this file is a ' + perms.file.version + ' version and our permission system does not list that as an archivable version'
-
-  try
-    # save any publisher/issn stuff we found for this journal
-    if af is false
-      af = academic_journal.find 'issn.exact:"' + issns.join('" OR issn.exact:"') + '"'
-    if typeof af is 'object'
-      misns = false
-      for ni in issns
-        if ni not in af.issn
-          af.issn.push ni
-          misns = true
-      upd = {}
-      upd.example = doiex if doiex and not af.example
-      upd.publisher = meta.publisher if meta.publisher and not af.publisher
-      upd.issn = af.issn if misns
-      if not _.isEmpty upd
-        academic_journal.update af._id, upd
 
   if overall_policy_restriction
     msgs = 
@@ -500,14 +530,10 @@ API.service.oab.permission.import = (reload=false, src, stale=3600000) ->
                 cids.push(an) if an not in cids
           cids.push(nid) if nid not in cids
         nr.issuer.id = cids
-        #if not inaj and nr.issuer.type is 'journal'
-          # add the ISSN to the journal index - can't do this yet because permissions doesn't have journal name
-          #academic_journal.insert src: 'permissions', issn: nr.issuer.id, title: rec.journal # note these will have no publisher name
       nr.permission_required = rec.has_policy? and rec.has_policy.toLowerCase().indexOf('permission required') isnt -1
   
       for k of rec
         if keys[k] and rec[k]? and rec[k].length isnt 0
-          #console.log k
           nk = keys[k]
           nv = undefined
           if k is 'post-printembargo' # Post-Print Embargo - empty or number of months like 0, 12, 24
@@ -520,9 +546,10 @@ API.service.oab.permission.import = (reload=false, src, stale=3600000) ->
             for s in rcs = rec[k].trim().split ','
               st = s.trim()
               if k is 'licencesallowed'
-                lc = type: st.toLowerCase()
-                try lc.terms = rec.licenceterms.split(',')[rcs.indexOf(s)].trim() # these don't seem to exist any more...
-                nv.push lc
+                if st.toLowerCase() isnt 'unclear'
+                  lc = type: st.toLowerCase()
+                  try lc.terms = rec.licenceterms.split(',')[rcs.indexOf(s)].trim() # these don't seem to exist any more...
+                  nv.push lc
               else
                 if k is 'versionsarchivable'
                   st = st.toLowerCase()
@@ -533,7 +560,7 @@ API.service.oab.permission.import = (reload=false, src, stale=3600000) ->
           else if k not in ['recordlastupdated']
             nv = rec[k].trim()
           nv = nv.toLowerCase() if typeof nv is 'string' and (nv.toLowerCase() in ['yes','no'] or k in ['haspolicy','permissiontype','copyrightowner'])
-          nv = '' if k is 'copyrightowner' and nv is 'unclear'
+          nv = '' if k in ['copyrightowner','license'] and nv is 'unclear'
           if nv?
             if nk.indexOf('.') isnt -1
               nps = nk.split '.'
@@ -561,8 +588,7 @@ API.service.oab.permission.import = (reload=false, src, stale=3600000) ->
       nr.copyright_name ?= ''
       nr.copyright_year ?= '' # the year of publication, to be added at result stage
       ready.push(nr) if not _.isEmpty nr
-      #console.log nr
-      
+
       # TODO if there is a provenance.example DOI look up the metadata for it and find the journal ISSN. 
       # then have a search for ISSN be able to find that. Otherwise, we have coverage by publisher that 
       # contains no journal info, so no way to go from ISSN to the stored record
