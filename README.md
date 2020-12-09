@@ -1,12 +1,13 @@
 
 # Open Access Button API
 
+
 This repo will automatically deploy changes committed to the API. There is a develop branch and a master branch.
 Changes MUST be committed to the develop branch first and tested on the dev API. Once confirmed as being acceptable, 
 they can be committed to the master branch. Master does not yet autoamtically deploy - it could do, but will be checked 
 manually for now.
 
-This API code is a "plugin" for a larger API infrastructure. More details and docs to follow.
+This API code is a "plugin" for a larger API infrastructure: https://github.com/leviathanindustries/noddy. More details and docs to follow.
 
 
 ## Contributing
