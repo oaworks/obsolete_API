@@ -211,7 +211,10 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
         for an in (if typeof af.issn is 'string' then [af.issn] else af.issn)
           issns.push(an) if an not in issns # check again
         meta.doi ?= af.doi
-    meta.doi ?= API.use.crossref.journals.doi issns
+    try
+      meta.doi ?= API.use.crossref.journals.doi issns
+    catch # temporary until wider crossref update completed
+      meta.doi ?= API.use.crossref.journals.dois.example issns
     _getmeta() if not haddoi and meta.doi
   if haddoi and meta.crossref_type not in ['journal-article']
     return
