@@ -383,7 +383,7 @@ API.service.academic.journal.load = (sources) ->
       journal.subject = rec.subjects # objects with name and ASJC code
       journal.issn = _.uniq rec.ISSN # crossref can have duplicates in it...
       journal.doi = rec.doi # an example DOI inserted to crossref records, if we were able to find one
-      journal.dois = rec.counts?.total-dois
+      journal.dois = rec.counts?['total-dois']
       if rec.breakdowns?['dois-by-issued-year']?
         journal.years = []
         for yr in rec.breakdowns['dois-by-issued-year']
