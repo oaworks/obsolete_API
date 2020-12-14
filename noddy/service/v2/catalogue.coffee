@@ -4,10 +4,7 @@
 
 # TODO change this to become proper part of OAB stack
 
-import fs from 'fs'
-import Future from 'fibers/future'
 import unidecode from 'unidecode'
-import tar from 'tar'
 
 API.service ?= {}
 API.service.academic = {}
@@ -45,13 +42,23 @@ API.add 'service/academic/journal/:jid/oa', get: () -> return API.service.academ
 API.add 'service/academic/journal/suggest', get: () -> return API.service.academic.journal.suggest undefined, this.queryParams.from
 API.add 'service/academic/journal/suggest/:ac', get: () -> return API.service.academic.journal.suggest this.urlParams.ac
 API.add 'service/academic/journal/load', 
-  get: () -> 
-    Meteor.setTimeout (() => API.service.academic.journal.load this.queryParams.sources, this.queryParams.refresh, this.queryParams.doajrefresh, this.queryParams.titles), 1
-    return true
+  get: 
+    roleRequired: if API.settings.dev then undefined else 'openaccessbutton.admin'
+    action: () -> 
+      Meteor.setTimeout (() => API.service.academic.journal.load this.queryParams.sources, this.queryParams.refresh, this.queryParams.doajrefresh, this.queryParams.titles), 1
+      return true
+API.add 'service/academic/journal/load/examples', 
+  get: 
+    roleRequired: if API.settings.dev then undefined else 'openaccessbutton.admin'
+    action: () -> 
+      Meteor.setTimeout (() => API.service.academic.journal.load.examples()), 1
+      return true
 API.add 'service/academic/journal/load_oa', 
-  get: () -> 
-    Meteor.setTimeout (() => API.service.academic.journal.load_oa this.queryParams.refresh), 1
-    return true
+  get: 
+    roleRequired: if API.settings.dev then undefined else 'openaccessbutton.admin'
+    action: () -> 
+      Meteor.setTimeout (() => API.service.academic.journal.load_oa this.queryParams.refresh), 1
+      return true
 
 #API.add 'service/academic/funder', () -> return academic_funder.search this
 #API.add 'service/academic/funder/:jid', get: () -> return academic_funder.get this.urlParams.jid
@@ -69,9 +76,11 @@ API.add 'service/academic/publisher/:jid', get: () -> return academic_publisher.
 #API.add 'service/academic/publisher/suggest/:ac', get: () -> return API.service.academic.publisher.suggest this.urlParams.ac
 #API.add 'service/academic/publisher/load', get: () -> return API.service.academic.publisher.load this.queryParams.sources
 API.add 'service/academic/publisher/load_oa', 
-  get: () -> 
-    Meteor.setTimeout (() => API.service.academic.publisher.load_oa this.queryParams.refresh), 1
-    return true
+  get: 
+    roleRequired: if API.settings.dev then undefined else 'openaccessbutton.admin'
+    action: () -> 
+      Meteor.setTimeout (() => API.service.academic.publisher.load_oa this.queryParams.refresh), 1
+      return true
 
 
 
@@ -183,7 +192,7 @@ API.service.academic.institution.suggest = (str, from, size=100) ->
     #{term: {'snaks.property.exact':'P5586'}}, # Times higher education world university ID
     #{term: {'snaks.property.exact':'P5584'}}, # QS world university ID
     #{term: {'snaks.qid.exact':'Q4671277'}} #instance of academic institution
-  ]}}}}, size: size, _source: {includes: ['label','snaks.property','snaks.value']}}
+  ]}}}}, size: size, _source: {includes: ['label','snaks.property','snaks.value','snaks.qid']}}
   q.from = from if from?
   if str
     str = API.service.academic._clean(str).replace(/the /gi,'')
@@ -197,15 +206,18 @@ API.service.academic.institution.suggest = (str, from, size=100) ->
   for rec in res?.hits?.hits ? []
     rc = {title: rec._source.label}
     for s in rec._source.snaks
-      if s.property is 'P6782'
-        rc.id = s.value
+      if rc.id and rc.country
         break
+      else
+        rc.id = s.value if s.property is 'P6782'
+        if s.property is 'P17' and cwd = wikidata_record.get s.qid
+          rc.country = cwd.label
     if str
       if rec._source.label.toLowerCase().indexOf('universit') isnt -1
         unis.push rc
       else if API.service.academic._clean(rec._source.label).replace('the ','').replace('university ','').replace('of ','').startsWith(str.replace('the ','').replace('university ','').replace('of ',''))
         starts.push rc
-      else if unidecode(str) isnt str # allow matches on more random characters that may be matching elsewhere in the data but not in the actual title
+      else if str.indexOf(' ') is -1 or unidecode(str) isnt str # allow matches on more random characters that may be matching elsewhere in the data but not in the actual title
         extra.push rc
     else
       extra.push rc
@@ -246,51 +258,32 @@ API.service.academic.funder.suggest = (str, from, size=100) ->
   return total: res?.hits?.total ? 0, data: _.union starts.sort((a, b) -> return a.title.length - b.title.length), extra.sort((a, b) -> return a.title.length - b.title.length)
 
 API.service.academic.journal = {}
-API.service.academic.journal.suggest = (str, from, size=100, isnumber) ->
-  q = {query: {filtered: {query: {query_string: {}}, filter: {bool: {should: []}}}}, size: size, _source: {includes: ['title','issn','publisher','src']}}
+API.service.academic.journal.suggest = (str, from, size=100) ->
+  q = {query: {filtered: {query: {query_string: {query: 'issn:* AND NOT dois:0'}}, filter: {bool: {should: []}}}}, size: size, _source: {includes: ['title','issn','publisher','src']}}
   q.from = from if from?
   if str
-    # only ones with ISSN for now? and only ones in crossref?
-    if isnumber isnt false and (typeof str is 'number' or not isNaN parseInt str.replace('-','').replace(/ /g,''))
-      isnumber = true
-      isnr = if typeof str is 'number' then str else str.replace(' ','-')
-      if isnr.length is 9
-        isnr = 'issn.exact:"' + isnr + '"'
-      else if isnr.indexOf('-') isnt -1
-        isnrp = isnr.split '-'
-        isnr = 'issn:"' + isnrp[0] + '"'
-        isnr += ' AND issn:' + isnrp[1] + '*' if isnrp[1].length
+    if str.indexOf(' ') is -1
+      if str.indexOf('-') isnt -1 and str.length is 9
+        q.query.filtered.query.query_string.query = 'issn.exact:"' + str + '"'
       else
-        isnr = 'issn:' + isnr + '*'
-      q.query.filtered.query.query_string.query = isnr
+        if str.indexOf('-') isnt -1
+          q.query.filtered.query.query_string.query = '(issn:"' + str.replace('-','" AND issn:') + '*)'
+        else
+          q.query.filtered.query.query_string.query = 'issn:' + str + '*'
+        q.query.filtered.query.query_string.query += ' OR title:"' + str + '" OR title:' + str + '* OR title:' + str + '~'
     else
       str = API.service.academic._clean str
-      q.query.filtered.query.query_string.query = 'issn:* AND NOT counts.total-dois:0 AND (title:"' + str + '" OR '
-      q.query.filtered.query.query_string.query += (if str.indexOf(' ') is -1 then 'title:' + str + '*' else '(title:' + str.replace(/ /g,' AND title:') + '*)') + ')'
-  else
-    q.query.filtered.query.query_string.query = 'issn:* AND NOT counts.total-dois:0'
+      q.query.filtered.query.query_string.query = 'issn:* AND NOT dois:0 AND (title:"' + str + '" OR '
+      q.query.filtered.query.query_string.query += (if str.indexOf(' ') is -1 then 'title:' + str + '*' else '(title:' + str.replace(/ /g,'~ AND title:') + '*)') + ')'
   res = academic_journal.search q
-  if isnumber and res?.hits?.total is 0 and str.replace(/[^0-9]/g,'').length
-    return API.service.academic.journal.suggest str, from, size, false
   starts = []
   extra = []
   for rec in res?.hits?.hits ? []
-    if rec._source.DisplayName?
-      rec._source.title = rec._source.DisplayName # prefer MAG journal titles where available
-      delete rec._source.DisplayName
-    if isnumber
-      for i in rec._source.issn
-        if i.startsWith str
-          extra.push rec._source
-          break
-    else if not str or API.service.academic._clean(rec._source.title).startsWith(str)
+    if not str or JSON.stringify(rec._source.issn).indexOf(str) isnt -1 or API.service.academic._clean(rec._source.title).startsWith(str)
       starts.push rec._source
     else
       extra.push rec._source
     rec._source.id = rec._source.issn[0]
-    rec._source.doaj = true if 'doaj' in rec._source.src
-    #delete rec._source.issn
-    #delete rec._source.src
   return total: res?.hits?.total ? 0, data: _.union starts.sort((a, b) -> return a.title.length - b.title.length), extra.sort((a, b) -> return a.title.length - b.title.length)
 
 
@@ -341,7 +334,7 @@ API.service.academic.journal.load_oa = (refresh, issn_or_rec, doi) ->
                     if s.key is 'DOI'
                       adoi = s.value
             if adoi is false
-              cr = API.use.crossref.journals.dois.example isn
+              cr = API.use.crossref.journals.doi isn
               adoi = cr if cr?
             if adoi and oad = API.use.oadoi.doi adoi, false
               oadoi_is_oa = oad.journal_is_oa
@@ -359,208 +352,164 @@ API.service.academic.journal.load_oa = (refresh, issn_or_rec, doi) ->
     academic_journal.each (if refresh then '*' else 'NOT is_oa:*'), _loadoa
     return res
       
-API.service.academic.journal.load = (sources=['wikidata','crossref','doaj'], refresh=false, doajrefresh=false, titles=false) -> # ,'microsoft','sheet'
-  academic_journal.remove('*') if refresh is true
-  sources = sources.split(',') if typeof sources is 'string'
+
+
+
+API.service.academic.journal.load = (sources) ->
+  if sources
+    sources = sources.split(',') if typeof sources is 'string'
+  else
+    # if no sources specified, dump everything and load fresh
+    academic_journal.remove '*' # could make this a bulk delete earlier than createdAt now
+
   processed = 0
   saved = 0
-  updated = 0
   batch = []
-  _load = (rec) ->
-    console.log processed, saved, updated, batch.length
-    processed += 1
-    journal = {}
+  loadedissns = []
 
-    if batch.length >= 5000
+  _load = (rec={}) ->
+    processed += 1
+    console.log processed, saved, batch.length, loadedissns.length
+    if batch.length >= 10000
       academic_journal.insert batch
       batch = []
 
-    # example wikidata record https://dev.api.cottagelabs.com/use/wikidata/Q27721026
-    if rec.snaks
-      journal = rec # worth keeping full records?
-      isjournal = false
+    journal = {}
+
+    # example crossref record https://dev.api.cottagelabs.com/use/crossref/journals/0965-2302
+    if rec?.ISSN? and rec.ISSN.length # crossref uses capitalised journal ISSN list
+      journal.title = rec.title
+      journal.publisher = rec.publisher
+      journal.subject = rec.subjects # objects with name and ASJC code
+      journal.issn = _.uniq rec.ISSN # crossref can have duplicates in it...
+      journal.doi = rec.doi # an example DOI inserted to crossref records, if we were able to find one
+      journal.dois = rec.counts?.total-dois
+      if rec.breakdowns?['dois-by-issued-year']?
+        journal.years = []
+        for yr in rec.breakdowns['dois-by-issued-year']
+          journal.years.push(yr[0]) if yr.length is 2 and yr[0] not in journal.years
+        journal.years.sort()
+      journal.issn = [journal.issn] if typeof journal.issn is 'string'
+      journal.src = ['crossref']
+      try rec = wikidata_record.find '(snaks.value.exact:"' + journal.issn.join('" OR snaks.value.exact:"') + '") AND snaks.key.exact:"ISSN" AND snaks.key.exact:"instance of" AND snaks.qid.exact:"Q5633421"'
+
+    if rec?.snaks
       for snak in rec.snaks
         if snak.property is 'P921'
-          sb = wikidata_record.get snak.qid
-          if sb?.label?
-            journal.subject ?= []
-            journal.subject.push {name:sb.label}
-        if snak.key is 'ISSN'
+          journal.subject ?= []
+          if snak.value
+            journal.subject.push {name: snak.value}
+          else
+            sb = wikidata_record.get snak.qid # remove this if too slow
+            journal.subject.push({name: sb.label}) if sb?.label?
+        if snak.key is 'ISSN' and not journal.issn 
+          # don't trust wikidata ISSNs if we already have crossref ones. but note this means we will miss some matches where crossref is wrong and not wikidata
+          # here is one where crossref is wrong and we could get the right one from wikidata: https://dev.api.cottagelabs.com/use/crossref/journals?q="1474-9728"
+          # crossref wrongly has the incorrect ISSN and one other, wheras wikidata has the two correct ones
+          # but then wikidata can be wrong and get us more wrong stuff, like: https://dev.lvatn.com/use/wikidata?q="1684-1182"
+          # it has the wrong ISSN 0253-2662. The proper alternative is 1995-9133
           journal.issn ?= []
           snv = snak.value.toUpperCase().trim()
           journal.issn.push(snv) if snv not in journal.issn
         if snak.key is 'publisher'
-          try journal.publisher = wikidata_record.get(snak.qid).label
+          try journal.publisher ?= wikidata_record.get(snak.qid).label
         if snak.property is 'P5115'
           journal.wikidata_in_doaj = snak.value
           journal.is_oa = true
         if snak.property is 'P275'
-          try journal.licence = wikidata_record.get(snak.qid).label
-        isjournal = true if snak.key is 'instance of' and snak.qid is 'Q5633421'
-      if isjournal
-        journal.src = ['wikidata']
-        journal.title = rec.label
-        journal.wikidata = rec.id
-        delete journal._id
-        delete journal.id
-        delete journal.type
-      else
-        journal = {}
-    
-    # example crossref record https://dev.api.cottagelabs.com/use/crossref/journals/0965-2302
-    else if rec.ISSN? # crossref uses capitalised journal ISSN list
-      # crossref journal subjects is a list of object with keys name and ASJC (subjects and keywords handled below)
-      journal = rec
-      journal.src = ['crossref']
-      journal.issn = journal.ISSN
+          try journal.licence ?= wikidata_record.get(snak.qid).label
+      journal.src ?= []
+      journal.src.push 'wikidata'
+      journal.title = rec.label
+      journal.wikidata = rec.id
 
-    # example doaj record https://dev.api.cottagelabs.com/use/doaj/journals/issn/0124-2253
-    else if rec.bibjson?
-      journal = rec.bibjson
-      journal.src = ['doaj']
+    if not rec?.bibjson? and journal.issn? and journal.issn.length
+      rec = doaj_journal.find 'bibjson.pissn.exact:"' + journal.issn.join('" OR bibjson.pissn.exact:"') + '" OR bibjson.eissn.exact:"' + journal.issn.join('" OR bibjson.eissn.exact:"') + '"'
+    if rec?.bibjson?
+      journal.src ?= []
+      journal.src.push 'doaj'
       journal.is_oa = true
-      journal.admin = rec.admin if rec.admin?
+      journal.doaj_admin = rec.admin if rec.admin?
+      journal.title ?= rec.bibjson.title
+      journal.publisher ?= rec.bibjson.publisher
+      journal.keyword ?= rec.bibjson.keywords
+      if rec.bibjson.subject? and rec.bibjson.subject.length
+        journal.subject ?= []
+        for jsn in rec.bibjson.subject
+          jsn.name ?= jsn.term # doaj has the subject "name" in the "term" key
+          journal.subject.push jsn
       journal.issn ?= []
-      # handle keywords (list of keywords) and subject (list of objects)
-      for i in journal.identifier ? []
-        if typeof i.id is 'string'
-          idv = i.id.toUpperCase().trim()
-          if i.type.indexOf('issn') isnt -1 and idv not in journal.issn
-            journal.issn.push idv
-      if _.isArray(journal.license) and journal.license.length
-        journal.licence = journal.license[0].title
+      journal.issn.push(rec.bibjson.pissn) if rec.bibjson.pissn? and rec.bibjson.pissn not in journal.issn
+      journal.issn.push(rec.bibjson.eissn) if rec.bibjson.eissn? and rec.bibjson.eissn not in journal.issn
+      try journal.licence = rec.bibjson.license[0].title.toLowerCase().replace(/ /g, '-')
     
-    # example ms record https://dev.api.cottagelabs.com/use/microsoft/graph/journal/5bf573d51c5a1dcdd96ee6a8
-    else if rec.DisplayName
-      journal = rec
-      journal.src = ['mag']
-    
-    # also want to get from a manually curated sheet source
+    if journal.issn? and journal.issn.length
+      saved += 1
+      for issn in journal.issn
+        loadedissns.push(issn) if issn not in loadedissns
+      batch.push journal
 
-    if not _.isEmpty journal
-      if journal.subjects
-        journal.subject = journal.subjects
-        delete journal.subjects
-      if journal.subject? and journal.subject.length
-        sn = []
-        for jsn in journal.subject
-          if typeof journal.subject[0] is 'string'
-            sn.push({name:jsn})
-          else
-            jsn.name ?= jsn.term # doaj has the subject "name" in the "term" key
-            sn.push jsn
-        journal.subject = sn
-      if journal.keywords
-        journal.keyword = journal.keywords
-        delete journal.keywords
-      if journal.keyword? and journal.keyword.length and typeof journal.keyword[0] isnt 'string'
-        kn = []
-        for ksn in journal.keyword
-          kn.push(ksn.name ? ksn.term ? ksn.title ? ksn.value) if ksn.name? or ksn.term? or ksn.title? or ksn.value? # and anything else it could be in...
-        journal.keyword = kn
-      delete journal.createdAt
-      delete journal.created_date
-      delete journal.updatedAt
-      delete journal.updated_date
+  # start with everything in crossref
+  if not sources or 'crossref' in sources
+    crossref_journal.each '*', (rec) ->
+      _load(rec) if not sources or ('crossref' in sources and not academic_journal.find 'issn.exact:"' + rec.ISSN.join('" OR issn.exact:"') + '"')
 
-      journal.issn = [journal.issn] if typeof journal.issn is 'string'
-      journal.issn = _.uniq(journal.issn) if journal.issn? and journal.issn.length > 1
-      if journal.issn? and journal.issn.length
-        found = academic_journal.find 'issn.exact:"' + journal.issn.join('" OR issn.exact:"') + '"'
-        if typeof found isnt 'object'
-          batch.push journal
-          saved += 1
-        else
-          upd = {}
-          found.issn = [found.issn] if typeof found.issn is 'string'
-          for k of journal
-            if k in ['issn','title','publisher'] and journal.src[0] in ['crossref','doaj'] # allow crossref ISSN values to override others because for example Development has additional ISSNs in wikidata that should not be there
-              if not _.isEqual journal[k], found[k]
-                if journal.src[0] is 'crossref' or (journal.src[0] is 'doaj' and 'crossref' not in found.src)
-                  upd[k] = journal[k]
-                else if journal.src[0] is 'doaj' and k is 'issn'
-                  upd[k] = _.clone found[k]
-                  for j in journal[k]
-                    upd[k].push(j) if j not in upd[k]
-                  delete upd[k] if _.isEqual upd[k], found[k]
-            else if not found[k]?
-              upd[k] = journal[k]
-            else if _.isArray journal[k]
-              if not _.isArray found[k]
-                upd[k] = journal[k]
-              else if journal[k].length is 0 and found[k].length
-                upd[k] = found[k]
-              else
-                if journal[k].length and typeof journal[k][0] is 'string'
-                  upd[k] = _.union journal[k], found[k]
-                else
-                  try
-                    if JSON.stringify(journal[k]).split('').sort().join('') isnt JSON.stringify(found[k]).split('').sort().join('')
-                      upd[k] = journal[k]
-                  catch
-                    upd[k] = journal[k]
-              delete upd[k] if _.isEqual upd[k], found[k]
-            else if typeof found[k] is 'object'
-              upd[k] = _.clone found[k]
-              for kk of journal[k]
-                upd[k][kk] ?= journal[k][kk]
-              delete upd[k] if _.isEqual upd[k], found[k]
-          if journal.wikidata_in_doaj and upd.issn?
-            jwd = journal.wikidata_in_doaj.toUpperCase().trim() 
-            if jwd not in upd.issn
-              upd.issn.push jwd
-          if not _.isEmpty upd
-            academic_journal.update found._id, upd
-            updated += 1
+  if not sources or 'wikidata' in sources
+    console.log 'academic journal import trying remainders in wikidata'
+    wikidata_record.each 'snaks.key.exact:"ISSN" AND snaks.key.exact:"instance of" AND snaks.qid.exact:"Q5633421"', (rec) ->
+      loadable = true
+      issns = []
+      for snak in rec.snaks
+        if snak.key.indexOf('ISSN') is 0 # could be ISSN-L for example
+          svn = snak.value.toUpperCase().trim()
+          issns.push svn
+          if svn in loadedissns
+            loadable = false
+            break
+      _load(rec) if loadable and (not sources or ('wikidata' in sources and not academic_journal.find 'issn.exact:"' + issns.join('" OR issn.exact:"') + '"'))
 
-  if 'wikidata' in sources
-    wikidata_record.each 'snaks.key.exact:"ISSN"', _load
-    future = new Future() # wait a while for index to have everything saved, so that other sources dedup
-    Meteor.setTimeout (() -> future.return()), 10000
-    future.wait()
+  if not sources or 'doaj' in sources
+    console.log 'academic journal import trying remainders in doaj'
+    doaj_journal.each '*', (rec) ->
+      loadable = true
+      issns = []
+      for i in rec.bibjson?.identifier ? []
+        if typeof i.id is 'string' and i.type.indexOf('issn') isnt -1
+          isn = i.id.toUpperCase().trim()
+          issns.push isn
+          if isn in loadedissns
+            loadable = false
+            break
+      _load(rec) if loadable and (not sources or ('doaj' in sources and not academic_journal.find 'issn.exact:"' + issns.join('" OR issn.exact:"') + '"'))
 
-  if 'crossref' in sources
-    crossref_journal.each '*', _load
-    future = new Future()
-    Meteor.setTimeout (() -> future.return()), 10000
-    future.wait()
-
-  if 'doaj' in sources
-    try
-      prev = false
-      current = false
-      fs.writeFileSync '/tmp/doaj' + (if API.settings.dev then '_dev' else ''), HTTP.call('GET', 'https://doaj.org/public-data-dump/journal', {npmRequestOptions:{encoding:null}}).content
-      tar.extract file: '/tmp/doaj' + (if API.settings.dev then '_dev' else ''), cwd: '/tmp', sync: true # extracted doaj dump folders end 2020-10-01
-      for f in fs.readdirSync '/tmp' # readdir alphasorts, so if more than one in tmp then last one will be newest
-        if f.indexOf('doaj_journal_data') isnt -1
-          if prev
-            try fs.unlinkSync '/tmp/' + prev + '/journal_batch_1.json'
-            try fs.rmdirSync '/tmp/' + prev
-          prev = current
-          current = f
-      if current and (prev or refresh or doajrefresh) # if there was no prev, current download was same as last download so only load if forced refresh
-        recs = JSON.parse fs.readFileSync '/tmp/' + current + '/journal_batch_1.json'
-        _load(rec) for rec in recs
-    future = new Future()
-    Meteor.setTimeout (() -> future.return()), 10000
-    future.wait()
-
-  #if 'microsoft' in sources
-  #  msgraph_journal.each '*', _load
-  
-  #if 'sheet'in sources
-
-  if batch.length
-    academic_journal.insert batch
+  academic_journal.insert(batch) if batch.length
 
   API.mail.send
     from: 'alert@cottagelabs.com'
     to: 'alert@cottagelabs.com'
-    subject: 'Academic journal import complete'
-    text: processed + ' ' + saved + ' ' + updated
+    subject: 'Academic journal import complete' + (if API.settings.dev then ' (dev)' else '')
+    text: 'processed ' + processed + ', saved ' + saved + ', ' + loadedissns.length + ' unique ISSNs'
 
   return saved
 
+API.service.academic.journal.load.examples = () ->
+  started = Date.now()
+  tried = 0
+  found = 0
+  academic_journal.each 'NOT doi:*', (rec) ->
+    console.log tried, found, (Date.now() - started)
+    tried += 1
+    rec.doi = API.use.crossref.journals.doi rec.issn
+    if rec.doi?
+      academic_journal.update rec._id, doi: rec.doi
+      found += 1
+  API.log 'finished looking for crossref journal DOI examples, took ' + (Date.now() - started)
+  return found
+
+_load_examples = () -> # remove this once we are closer to having them all, or have a full crossref index
+  if API.settings.cluster?.ip? and API.status.ip() not in API.settings.cluster.ip
+    API.service.academic.journal.load.examples()
+#Meteor.setTimeout _load_examples, 6000
 
 
 API.service.academic.publisher = {}

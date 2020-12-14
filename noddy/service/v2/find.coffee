@@ -282,7 +282,6 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       metadata.doi = options.doi
       delete metadata.title
       delete metadata.citation
-  console.log options.citation, options.title
   if options.citation? or options.title?
     try
       cmt = API.service.oab.citation options.citation ? options.title
