@@ -44,7 +44,7 @@ API.add 'service/oab/p2/journal/:issnorid',
     else if j = oab_permissions.find journal: this.urlParams.issnorid
       return j
     else if this.urlParams.issnorid.indexOf('-') isnt -1
-      return API.service.oab.permissions {issn: this.urlParams.issnorid, doi: this.queryParams.doi}
+      return API.service.oab.permission {issn: this.urlParams.issnorid, doi: this.queryParams.doi}
 
 API.add 'service/oab/p2/publisher',
   get: () -> return oab_permissions.search this.queryParams, restrict: [exists: field: 'publisher']
@@ -56,7 +56,7 @@ API.add 'service/oab/p2/publisher/:norid',
     else if p = oab_permissions.find 'issuer.id': this.urlParams.norid
       return p
     else
-      return API.service.oab.permissions {publisher: this.urlParams.norid, doi: this.queryParams.doi, issn: this.queryParams.issn}
+      return API.service.oab.permission {publisher: this.urlParams.norid, doi: this.queryParams.doi, issn: this.queryParams.issn}
 
 API.add 'service/oab/p2/affiliation',
   get: () -> return oab_permissions.search this.queryParams, restrict: [exists: field: 'affiliation']
@@ -68,7 +68,7 @@ API.add 'service/oab/p2/affiliation/:rororid', # could also be a two letter coun
     else if a = oab_permissions.find 'issuer.id': this.urlParams.rororid
       return a
     else
-      return API.service.oab.permissions {affiliation: this.urlParams.rororid, publisher: this.queryParams.publisher, doi: this.queryParams.doi, issn: this.queryParams.issn}
+      return API.service.oab.permission {affiliation: this.urlParams.rororid, publisher: this.queryParams.publisher, doi: this.queryParams.doi, issn: this.queryParams.issn}
 
 API.add 'service/oab/p2/import',
   get: 
@@ -604,8 +604,8 @@ API.service.oab.permission.import = (reload=false, src, stale=3600000) ->
       oab_permissions.insert ready
   API.mail.send
     service: 'openaccessbutton'
-    from: 'requests@openaccessbutton.org'
-    to: 'alert@cottagelabs.com'
+    from: 'natalia.norori@openaccessbutton.org'
+    to: 'mark@cottagelabs.com'
     subject: 'OAB permissions import check complete'
     text: 'Found ' + records.length + ' in sheet, imported ' + ready.length + ' records'
   return ready.length
@@ -805,7 +805,7 @@ API.service.oab.permission.test = (email) ->
 
   API.mail.send
     service: 'openaccessbutton'
-    from: 'requests@openaccessbutton.org'
+    from: 'natalia.norori@openaccessbutton.org'
     to: email ? 'alert@cottagelabs.com'
     subject: 'OAB permissions test complete'
     text: JSON.stringify res, '', 2

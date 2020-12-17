@@ -190,7 +190,7 @@ API.service.oab.deposit = (d, options={}, files, uid) ->
           creators.push at 
     creators = [{name:'Unknown'}] if creators.length is 0
     description = if d.metadata.abstract then d.metadata.abstract + '<br><br>' else ''
-    description += perms.permissions.required_statement ? (if d.metadata.doi? then 'The publisher\'s final version of this work can be found at https://doi.org/' + d.metadata.doi else '')
+    description += perms.best_permission?.deposit_statement ? (if d.metadata.doi? then 'The publisher\'s final version of this work can be found at https://doi.org/' + d.metadata.doi else '')
     description = description.trim()
     description += '.' if description.lastIndexOf('.') isnt description.length-1
     description += ' ' if description.length
@@ -216,11 +216,11 @@ API.service.oab.deposit = (d, options={}, files, uid) ->
     else if API.settings.service.openaccessbutton?.zenodo?.prereserve_doi
       meta.prereserve_doi = true
     meta['access_right'] = 'open'
-    meta.license = perms.permissions.licence_required ? 'cc-by' # zenodo also accepts other-closed and other-nc, possibly more
+    meta.license = perms.best_permission?.licence ? 'cc-by' # zenodo also accepts other-closed and other-nc, possibly more
     meta.license += '-4.0' if meta.license.toLowerCase().indexOf('cc') is 0 and isNaN(parseInt(meta.license.substring(meta.license.length-1)))
-    if perms.permissions.embargo?
+    if perms.best_permission?.embargo_end
       meta['access_right'] = 'embargoed'
-      meta['embargo_date'] = perms.permissions.embargo # check date format required by zenodo
+      meta['embargo_date'] = perms.best_permission.embargo_end # check date format required by zenodo
     try meta['publication_date'] = d.metadata.published if d.metadata.published? and typeof d.metadata.published is 'string'
     if uc isnt false
       uc.community = uc.community_ID if uc.community_ID? and not uc.community?
@@ -248,8 +248,8 @@ API.service.oab.deposit = (d, options={}, files, uid) ->
       dep.error = 'No Zenodo credentials available'
   dep.version = perms.file.version if perms.file?.version?
   if dep.zenodo.id
-    if perms.permissions.embargo
-      dep.embargo = perms.permissions.embargo
+    if perms.best_permission?.embargo_end
+      dep.embargo = perms.best_permission.embargo_end
     dep.type = 'zenodo'
   else if dep.error? and dep.error.toLowerCase().indexOf('zenodo') isnt -1
     dep.type = 'review'
@@ -261,7 +261,7 @@ API.service.oab.deposit = (d, options={}, files, uid) ->
   dd = {deposit: d.deposit, permissions: perms}
   oab_catalogue.update d._id, dd
 
-  bcc = API.settings.service.openaccessbutton.notify.deposit ? ['mark@cottagelabs.com','joe@righttoresearch.org','natalianorori@gmail.com']
+  bcc = API.settings.service.openaccessbutton.notify.deposit ? ['joe@righttoresearch.org','natalia.norori@openaccessbutton.org']
   #bcc = []
   #if dep.type isnt 'review'
   #  bcc = tos
@@ -431,7 +431,7 @@ API.service.oab.receive = (rid,files,url,title,description,firstname,lastname,cr
     API.service.oab.admin(r._id,'successful_upload') if up.publish
     API.mail.send
       service: 'openaccessbutton'
-      from: 'requests@openaccessbutton.org'
+      from: 'natalia.norori@openaccessbutton.org'
       to: API.settings.service.openaccessbutton.notify.receive
       subject: 'Request ' + r._id + ' received' + (if r.received.url? then ' - URL provided' else (if up.publish then ' - file published on Zenodo' else ' - zenodo publish required'))
       text: (if API.settings.dev then 'https://dev.openaccessbutton.org/request/' else 'https://openaccessbutton.org/request/') + r._id

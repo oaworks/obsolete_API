@@ -23,9 +23,9 @@ API.add 'service/oab/scripts/covidpapers',
             r[m] = rec.metadata[m]
         if r.doi
           try
-            pr = API.service.oab.permissions doi: r.doi
-            r.archiving_allowed = pr.permissions.archiving_allowed ? 'unknown'
-            r.version_allowed = pr.permissions.version_allowed ? 'unknown'
+            pr = API.service.oab.permission doi: r.doi
+            r.archiving_allowed = pr?.best_permission?.can_archive ? 'unknown'
+            r.version_allowed = pr?.best_permission?.version ? 'unknown'
         res.push r
       fs.writeFileSync '/home/cloo/static/covidpapers.csv', API.convert.json2csv res
       return res

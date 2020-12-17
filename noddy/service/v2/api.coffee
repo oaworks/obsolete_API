@@ -98,10 +98,10 @@ API.add 'service/oab/bug',
       subject += ' ' + Date.now()
       try
         if this.request.body?.form in ['wrong','uninstall']
-          whoto.push 'requests@openaccessbutton.org'
+          whoto.push 'natalia.norori@openaccessbutton.org'
       API.mail.send {
         service: 'openaccessbutton',
-        from: 'donotreply@openaccessbutton.org',
+        from: 'natalia.norori@openaccessbutton.org',
         to: whoto,
         subject: subject,
         text: text

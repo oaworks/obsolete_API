@@ -334,11 +334,11 @@ API.service.oab.request = (req,uacc,fast,notify=true) ->
   if req.story # and notify
     # for now still send if not notify, but remove Natalia (Joe requested it this way, so he still gets them on bulk creates, but Natalia does not)
     addrs = API.settings.service.openaccessbutton.notify.request
-    if not notify and typeof addrs isnt 'string' and 'natalianorori@gmail.com' in addrs
-      addrs.splice(addrs.indexOf('natalianorori@gmail.com'),1)
+    if not notify and typeof addrs isnt 'string' and 'natalia.norori@openaccessbutton.org' in addrs
+      addrs.splice(addrs.indexOf('natalia.norori@openaccessbutton.org'),1)
     API.mail.send
       service: 'openaccessbutton'
-      from: 'requests@openaccessbutton.org'
+      from: 'natalia.norori@openaccessbutton.org'
       to: addrs
       subject: 'New request created ' + req._id
       text: (if API.settings.dev then 'https://dev.openaccessbutton.org/request/' else 'https://openaccessbutton.org/request/') + req._id

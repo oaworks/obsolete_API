@@ -355,7 +355,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       delete catalogued.metadata.url if _.isArray catalogued.metadata?.url
     # if user wants a total refresh, don't use any of it (we still search for it though, because will overwrite later with the fresh stuff)
     if catalogued? and res.refresh isnt 0
-      #res.permissions ?= catalogued.permissions if catalogued.permissions? and not catalogued.permissions?.error? and (catalogued.metadata?.journal? or catalogued.metadata?.issn?)
+      res.permissions ?= catalogued.permissions if catalogued.permissions?.best_permission? and not _.isEmpty(catalogued.permissions.best_permission) and (catalogued.metadata?.journal? or catalogued.metadata?.issn?)
       if 'oabutton' in res.sources
         if catalogued.url? # within or without refresh time, if we have already found it, re-use it
           _get.metadata catalogued.metadata
@@ -407,7 +407,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
     _get.metadata API.service.oab.scrape options.url
 
   _get.permissions = () ->
-    res.permissions ?= API.service.oab.permissions metadata, undefined, undefined, undefined, (options.config ? options.from)
+    res.permissions ?= API.service.oab.permission metadata, undefined, undefined, undefined, (options.config ? options.from)
 
   _get.ill = () ->
     res.ill ?= {} # terms and openurl can be done client-side by new embed but old embed can't so keep these a while longer
@@ -523,7 +523,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
         delete _running[rn] if rn.indexOf('title') isnt -1 # don't wait for running title lookups if doi found since they started
     
     #console.log _running
-    if (not _got() or (res.find and not res.url)) and (not _.isEmpty(_running) or not _.isEqual(dd, done) or not _.isEqual(md, metadata))
+    if (not _got() or (options.permissions and not res.permissions?) or (res.find and not res.url)) and (not _.isEmpty(_running) or not _.isEqual(dd, done) or not _.isEqual(md, metadata))
       future = new Future()
       Meteor.setTimeout (() -> future.return()), 50
       future.wait()
@@ -599,7 +599,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
         upd.found = JSON.parse JSON.stringify res.found
         for cf of catalogued.found
           upd.found[cf] ?= catalogued.found[cf]
-      upd.permissions = res.permissions if res.permissions? and not res.permissions.error? and (not catalogued.permissions? or not _.isEqual res.permissions, catalogued.permissions)
+      upd.permissions = res.permissions if res.permissions?.best_permission? and not _.isEmpty(res.permissions.best_permission) and (not catalogued.permissions? or not _.isEqual res.permissions, catalogued.permissions)
       upd.usermetadata = res.usermetadata if res.usermetadata?
       if typeof metadata.title is 'string'
         ftm = API.service.oab.ftitle(metadata.title)
@@ -613,7 +613,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
         sources: res.sources
         checked: res.checked
         found: res.found
-        permissions: res.permissions if res.permissions? and not res.permissions.error?
+        permissions: res.permissions if res.permissions?.best_permission? and not _.isEmpty res.permissions.best_permission
       fl.ftitle = API.service.oab.ftitle(metadata.title) if typeof metadata.title is 'string'
       fl.usermetadata = res.usermetadata if res.usermetadata?
       _sv undefined, fl, res

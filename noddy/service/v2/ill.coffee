@@ -337,8 +337,8 @@ API.service.oab.ill.start = (opts={}) ->
     if not opts.forwarded and not opts.resolved
       API.mail.send {
         service: 'openaccessbutton',
-        from: 'requests@openaccessbutton.org',
-        to: ['mark@cottagelabs.com','joe@righttoresearch.org','s.barron@imperial.ac.uk'],
+        from: 'natalia.norori@openaccessbutton.org',
+        to: ['joe@righttoresearch.org','s.barron@imperial.ac.uk'],
         subject: 'EXAMPLE ILL TRIGGER',
         text: JSON.stringify(opts,undefined,2)
       }
