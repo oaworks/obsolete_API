@@ -485,8 +485,8 @@ API.service.academic.journal.load = (sources) ->
   academic_journal.insert(batch) if batch.length
 
   API.mail.send
-    from: 'alert@cottagelabs.com'
-    to: 'alert@cottagelabs.com'
+    from: 'sysadmin@cottagelabs.com'
+    to: 'mark@cottagelabs.com'
     subject: 'Academic journal import complete' + (if API.settings.dev then ' (dev)' else '')
     text: 'processed ' + processed + ', saved ' + saved + ', ' + loadedissns.length + ' unique ISSNs'
 

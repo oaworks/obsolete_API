@@ -1,29 +1,628 @@
 
+# See https://github.com/OAButton/discussion/issues/1516
+
 import crypto from 'crypto'
 import moment from 'moment'
 
 API.add 'service/oab/permissions',
   get: () ->
-    return API.service.oab.permissions this.queryParams, this.queryParams.content, this.queryParams.url, this.queryParams.confirmed, this.queryParams.uid
+    if this.queryParams?.q? or this.queryParams.source? or _.isEmpty this.queryParams
+      return oab_permissions.search this.queryParams
+    else
+      return API.service.oab.permission this.queryParams, this.queryParams.content, this.queryParams.url, this.queryParams.confirmed, this.queryParams.uid
   post: () ->
-    return API.service.oab.permissions this.queryParams, this.request.files ? this.request.body, undefined, this.queryParams.confirmed ? this.bodyParams?.confirmed
+    if not this.request.files? and typeof this.request.body is 'object' and (this.request.body.q? or this.request.body.source?)
+      this.bodyParams[k] ?= this.queryParams[k] for k of this.queryParams
+      return oab_permissions.search this.bodyParams
+    else
+      return API.service.oab.permission this.queryParams, this.request.files ? this.request.body, undefined, this.queryParams.confirmed ? this.bodyParams?.confirmed, this.queryParams.uid
 
-API.add 'service/oab/permissions/:doi/:doi2', get: () -> return API.service.oab.permissions doi: this.urlParams.doi + '/' + this.urlParams.doi2
+API.add 'service/oab/permissions/:issnorpub', 
+  get: () ->
+    if typeof this.urlParams.issnorpub is 'string' and this.urlParams.issnorpub.indexOf('-') isnt -1 and this.urlParams.issnorpub.indexOf('10.') isnt 0 and this.urlParams.issnorpub.length < 10
+      this.queryParams.issn ?= this.urlParams.issnorpub
+    else if this.urlParams.issnorpub.indexOf('10.') isnt 0
+      this.queryParams.publisher ?= this.urlParams.issnorpub # but this could be a ror too... any way to tell?
+    return API.service.oab.permission this.queryParams
 
-API.service.oab.permissions = (meta={}, file, url, confirmed, uid) ->
-  # example files / URLs
-  # https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3206455
-  # https://static.cottagelabs.com/obstm.pdf
+API.add 'service/oab/permissions/:doi/:doi2', 
+  get: () -> 
+    this.queryParams.doi ?= this.urlParams.doi + '/' + this.urlParams.doi2
+    return API.service.oab.permission this.queryParams
+API.add 'service/oab/permissions/:doi/:doi2/:doi3',
+  get: () -> 
+    this.queryParams.doi ?= this.urlParams.doi + '/' + this.urlParams.doi2 + '/' + this.urlParams.doi3
+    return API.service.oab.permission this.queryParams
+
+API.add 'service/oab/permissions/journal',
+  get: () -> return oab_permissions.search this.queryParams, restrict: [exists: field: 'journal']
+  post: () -> return oab_permissions.search this.bodyParams, restrict: [exists: field: 'journal']
+API.add 'service/oab/permissions/journal/:issnorid',
+  get: () -> 
+    if this.urlParams.issnorid.indexOf('-') is -1 and j = oab_permissions.get this.urlParams.issnorid
+      return j
+    else if j = oab_permissions.find journal: this.urlParams.issnorid
+      return j
+    else if this.urlParams.issnorid.indexOf('-') isnt -1
+      return API.service.oab.permission {issn: this.urlParams.issnorid, doi: this.queryParams.doi}
+
+API.add 'service/oab/permissions/publisher',
+  get: () -> return oab_permissions.search this.queryParams, restrict: [exists: field: 'publisher']
+  post: () -> return oab_permissions.search this.bodyParams, restrict: [exists: field: 'publisher']
+API.add 'service/oab/permissions/publisher/:norid',
+  get: () -> 
+    if p = oab_permissions.get this.urlParams.norid
+      return p
+    else if p = oab_permissions.find 'issuer.id': this.urlParams.norid
+      return p
+    else
+      return API.service.oab.permission {publisher: this.urlParams.norid, doi: this.queryParams.doi, issn: this.queryParams.issn}
+
+API.add 'service/oab/permissions/affiliation',
+  get: () -> return oab_permissions.search this.queryParams, restrict: [exists: field: 'affiliation']
+  post: () -> return oab_permissions.search this.bodyParams, restrict: [exists: field: 'affiliation']
+API.add 'service/oab/permissions/affiliation/:rororid', # could also be a two letter country code, which is in the same affiliation field as the ROR
+  get: () -> 
+    if a = oab_permissions.get this.urlParams.rororid
+      return a
+    else if a = oab_permissions.find 'issuer.id': this.urlParams.rororid
+      return a
+    else
+      return API.service.oab.permission {affiliation: this.urlParams.rororid, publisher: this.queryParams.publisher, doi: this.queryParams.doi, issn: this.queryParams.issn}
+
+API.add 'service/oab/permissions/import',
+  get: 
+    roleRequired: if API.settings.dev then undefined else 'openaccessbutton.admin'
+    action: () -> 
+      Meteor.setTimeout (() => API.service.oab.permission.import this.queryParams.reload, undefined, this.queryParams.stale), 1
+      return true
+API.add 'service/oab/permissions/test', get: () -> return API.service.oab.permission.test this.queryParams.email
+
+
+
+API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
+  overall_policy_restriction = false
+  cr = false
+  haddoi = false
+  
+  _prep = (rec) ->
+    if haddoi and rec.embargo_months and (meta.published or meta.year)
+      em = moment meta.published ? meta.year + '-01-01'
+      em = em.add rec.embargo_months, 'months'
+      #if em.isAfter moment() # changed 09112020 by JM request to always add embargo_end if we can calculate it, even if it is in the past.
+      rec.embargo_end = em.format "YYYY-MM-DD"
+    delete rec.embargo_end if rec.embargo_end is ''
+    rec.copyright_name = if rec.copyright_owner is 'publisher' then (if typeof rec.issuer.parent_policy is 'string' then rec.issuer.parent_policy else if typeof rec.issuer.id is 'string' then rec.issuer.id else rec.issuer.id[0]) else if rec.copyright_owner in ['journal','affiliation'] then (meta.journal ? '') else if (rec.copyright_owner and rec.copyright_owner.toLowerCase().indexOf('author') isnt -1) and meta.author? and meta.author.length and (meta.author[0].name or meta.author[0].family) then (meta.author[0].name ? meta.author[0].family) + (if meta.author.length > 1 then ' et al' else '') else ''
+    if rec.copyright_name in ['publisher','journal'] and (cr or meta.doi or rec.provenance?.example)
+      if cr is false
+        cr = API.use.crossref.works.doi meta.doi ? rec.provenance.example
+      if cr?.assertion? and cr.assertion.length
+        for a in cr.assertion
+          if a.name.toLowerCase() is 'copyright'
+            try rec.copyright_name = a.value
+            try rec.copyright_name = a.value.replace('\u00a9 ','').replace(/[0-9]/g,'').trim()
+    rec.copyright_year = meta.year if haddoi and rec.copyright_year is '' and meta.year
+    delete rec.copyright_year if rec.copyright_year is ''
+    #for ds in ['copyright_name','copyright_year']
+    #  delete rec[ds] if rec[ds] is ''
+    if haddoi and rec.deposit_statement? and rec.deposit_statement.indexOf('<<') isnt -1
+      fst = ''
+      for pt in rec.deposit_statement.split '<<'
+        if fst is '' and pt.indexOf('>>') is -1
+          fst += pt
+        else
+          eph = pt.split '>>'
+          ph = eph[0].toLowerCase()
+          swaps = 
+            'journal title': 'journal'
+            'vol': 'volume'
+            'date of publication': 'published'
+            '(c)': 'year'
+            'article title': 'title'
+            'copyright name': 'copyright_name'
+          ph = swaps[ph] if swaps[ph]?
+          if ph is 'author'
+            try fst += (meta.author[0].name ? meta.author[0].family) + (if meta.author.length > 1 then ' et al' else '')
+          else
+            fst += meta[ph] ? rec[ph] ? ''
+          try fst += eph[1]
+      rec.deposit_statement = fst
+    if rec._id?
+      rec.meta ?= {}
+      rec.meta.source = 'https://' + (if API.settings.dev then 'dev.api.cottagelabs.com/service/oab/permissions/' else 'api.openaccessbutton.org/permissions/') + (if rec.issuer.type then rec.issuer.type + '/' else '') + rec._id
+    if typeof rec.issuer?.has_policy is 'string' and rec.issuer.has_policy.toLowerCase().trim() in ['not publisher','takedown']
+      # find out if this should be enacted if it is the case for any permission, or only the best permission
+      overall_policy_restriction = rec.issuer.has_policy
+    delete rec[d] for d in ['_id','permission_required','createdAt','updatedAt','created_date','updated_date']
+    try delete rec.issuer.updatedAt
+    return rec
+
+  _score = (rec) ->
+    score = if rec.can_archive then 1000 else 0
+    score += 1000 if rec.provenance?.oa_evidence is 'In DOAJ'
+    if rec.requirements?
+      # TODO what about cases where the requirement is met?
+      # and HOW is requirement met? we search ROR against issuer, but how does that match with author affiliation?
+      # should we even be searching for permissions by ROR, or only using it to calculate the ones we find by some other means?
+      # and if it is not met then is can_archive worth anything?
+      score -= 10
+    else
+      score += if rec.version is 'publishedVersion' then 200 else if rec.version is 'acceptedVersion' then 100 else 0
+    score -= 5 if rec.licences? and rec.licences.length
+    score += if rec.issuer?.type is 'journal' then 5 else if rec.issuer?.type is 'publisher' then 4 else if rec.issuer?.type is 'university' then 3 else if rec.issuer?.type in 'article' then 2 else 0
+    score -= 25 if rec.embargo_months and rec.embargo_months >= 36 and (not rec.embargo_end or moment(rec.embargo_end,"YYYY-MM-DD").isBefore(moment()))
+    return score
+
 
   inp = {}
+  if typeof meta is 'string'
+    meta = if meta.indexOf('10.') is 0 then {doi: meta} else {issn: meta}
   if meta.metadata? # if passed a catalogue object
     inp = meta
     meta = meta.metadata
+    
+  if meta.affiliation
+    meta.ror = meta.affiliation
+    delete meta.affiliation
+  if meta.journal and meta.journal.indexOf(' ') is -1
+    meta.issn = meta.journal
+    delete meta.journal
+  if meta.publisher and meta.publisher.indexOf(' ') is -1 and meta.publisher.indexOf(',') is -1 and not oab_permissions.find 'issuer.type.exact:"publisher" AND issuer.id:"' + meta.publisher + '"'
+    # it is possible this may actually be a ror, so switch to ror just in case - if it still matches nothing, no loss
+    meta.ror = meta.publisher
+    delete meta.publisher
 
-  formats = ['doc','tex','pdf','htm','xml','txt','rtf','odf','odt','page']
+  issns = if _.isArray(meta.issn) then meta.issn else [] # only if directly passed a list of ISSNs for the same article, accept them as the ISSNs list to use
+  meta.issn = meta.issn.split(',') if typeof meta.issn is 'string' and meta.issn.indexOf(',') isnt -1
+  meta.ror = meta.ror.split(',') if typeof meta.ror is 'string' and meta.ror.indexOf(',') isnt -1
+  
+  ror = meta.ror ? false
+  if ror is false
+    uc = if typeof roruid is 'object' then roruid else if typeof roruid is 'string' then API.service.oab.deposit.config(roruid) else undefined
+    if (typeof uc is 'object' and uc.ror?) or typeof roruid is 'string'
+      ror = uc?.ror ? roruid
 
-  perms = {permissions: {archiving_allowed: false, version_allowed: undefined, embargo: undefined, required_statement: undefined, licence_required: undefined}, file: undefined}
+  if _.isEmpty(meta) or (meta.issn and JSON.stringify(meta.issn).indexOf('-') is -1) or (meta.doi and (typeof meta.doi isnt 'string' or meta.doi.indexOf('10.') isnt 0 or meta.doi.indexOf('/') is -1))
+    return body: 'No valid DOI, ISSN, or ROR provided', statusCode: 404
+    
+  # NOTE later will want to find affiliations related to the authors of the paper, but for now only act on affiliation provided as a ror
+  # we now always try to get the metadata because joe wants to serve a 501 if the doi is not a journal article
+  _getmeta = () ->
+    psm = JSON.parse JSON.stringify meta
+    delete psm.ror
+    if not _.isEmpty psm
+      try
+        rsm = API.service.oab.metadata {metadata: ['crossref_type','issn','publisher','published','year','author']}, psm
+        for mk of rsm
+          if mk not in ['ror']
+            meta[mk] ?= rsm[mk]
+  _getmeta() if getmeta isnt false and meta.doi and (not meta.publisher or not meta.issn)
+  meta.published = meta.year + '-01-01' if not meta.published and meta.year
+  haddoi = meta.doi
+  af = false
+  if meta.issn
+    meta.issn = [meta.issn] if typeof meta.issn is 'string'
+    if not issns.length # they're already meta.issn in this case anyway
+      for inisn in meta.issn
+        issns.push(inisn) if inisn not in issns # check just in case
+    if not issns.length or not meta.publisher or not meta.doi
+      if af = academic_journal.find 'issn.exact:"' + issns.join('" OR issn.exact:"') + '"'
+        meta.publisher ?= af.publisher
+        for an in (if typeof af.issn is 'string' then [af.issn] else af.issn)
+          issns.push(an) if an not in issns # check again
+        meta.doi ?= af.doi
+    try
+      meta.doi ?= API.use.crossref.journals.doi issns
+    catch # temporary until wider crossref update completed
+      meta.doi ?= API.use.crossref.journals.dois.example issns
+    _getmeta() if not haddoi and meta.doi
+  if haddoi and meta.crossref_type not in ['journal-article']
+    return
+      body: 'DOI is not a journal article'
+      status: 501
 
+  if meta.publisher and meta.publisher.indexOf('(') isnt -1 and meta.publisher.lastIndexOf(')') > (meta.publisher.length*.7)
+    # could be a publisher name with the acronym at the end, like Public Library of Science (PLoS)
+    # so get rid of the acronym because that is not included in the publisher name in crossref and other sources
+    meta.publisher = meta.publisher.substring(0, meta.publisher.lastIndexOf('(')).trim()
+
+  try
+    meta.citation = '['
+    meta.citation += meta.title + '. ' if meta.title
+    meta.citation += meta.journal + ' ' if meta.journal
+    meta.citation += meta.volume + (if meta.issue then ', ' else ' ') if meta.volume
+    meta.citation += meta.issue + ' ' if meta.issue
+    meta.citation += 'p' + (meta.page ? meta.pages) if meta.page? or meta.pages?
+    if meta.year or meta.published
+      meta.citation += ' (' + (meta.year ? meta.published).split('-')[0] + ')'
+    meta.citation = meta.citation.trim()
+    meta.citation += ']'
+
+  perms = best_permission: undefined, all_permissions: [], file: undefined
+  rors = []
+  if meta.ror?
+    meta.ror = [meta.ror] if typeof meta.ror is 'string'
+    rs = oab_permissions.search 'issuer.id.exact:"' + meta.ror.join('" OR issuer.id.exact:"') + '"'
+    if not rs?.hits?.total
+      # look up the ROR in wikidata - if found, get the qid from the P17 country snak, look up that country qid
+      # get the P297 ISO 3166-1 alpha-2 code, search affiliations for that
+      if rwd = wikidata_record.find 'snaks.property.exact:"P6782" AND snaks.property.exact:"P17" AND (snaks.value.exact:"' + meta.ror.join(" OR snaks.value.exact:") + '")'
+        snkd = false
+        for snak in rwd.snaks
+          if snkd
+            break
+          else if snak.property is 'P17'
+            if cwd = wikidata_record.get snak.qid
+              for sn in cwd.snaks
+                if sn.property is 'P297'
+                  snkd = true
+                  rs = oab_permissions.search 'issuer.id.exact:"' + sn.value + '"'
+                  break
+    for rr in rs?.hits?.hits ? []
+      tr = _prep rr._source
+      tr.score = _score tr
+      rors.push tr
+
+  if issns.length or meta.publisher
+    qr = if issns.length then 'issuer.id.exact:"' + issns.join('" OR issuer.id.exact:"') + '"' else ''
+    if meta.publisher
+      qr += ' OR ' if qr isnt ''
+      qr += 'issuer.id:"' + meta.publisher + '"' # how exact/fuzzy can this be
+    ps = oab_permissions.search qr
+    if ps?.hits?.hits? and ps.hits.hits.length
+      for p in ps.hits.hits
+        rp = _prep p._source
+        rp.score = _score rp
+        perms.all_permissions.push rp
+
+  if perms.all_permissions.length is 0 and meta.publisher and not meta.doi and not issns.length
+    af = academic_journal.find 'publisher:"' + meta.publisher + '"'
+    if not af?
+      fz = academic_journal.find 'publisher:"' + meta.publisher.split(' ').join(' AND publisher:"') + '"'
+      if fz.publisher is meta.publisher
+        af = fz
+      else
+        lvs = API.tdm.levenshtein fz.publisher, meta.publisher, true
+        longest = if lvs.length.a > lvs.length.b then lvs.length.a else lvs.length.b
+        af = fz if lvs.distance < 5 or longest/lvs.distance > 10
+    if typeof af is 'object' and af.is_oa
+      pisoa = academic_journal.count('publisher:"' + af.publisher + '"') is academic_journal.count('publisher:"' + af.publisher + '" AND is_oa:true')
+    af = false if not af.is_oa or not pisoa
+
+  if typeof af is 'object' and af.is_oa isnt false
+    af.is_oa = true if not af.is_oa? and ('doaj' in af.src or af.wikidata_in_doaj)
+    if af.is_oa
+      altoa =
+        can_archive: true
+        version: 'publishedVersion'
+        versions: ['publishedVersion']
+        licence: undefined
+        licence_terms: ""
+        licences: []
+        locations: ['institutional repository']
+        embargo_months: undefined
+        issuer:
+          type: 'journal'
+          has_policy: 'yes'
+          id: af.issn
+        meta:
+          creator: ['joe+doaj@openaccessbutton.org']
+          contributors: ['joe+doaj@openaccessbutton.org']
+          monitoring: 'Automatic'
+
+      try altoa.licence = af.license[0].type # could have doaj licence info
+      altoa.licence ?= af.licence # wikidata licence
+      if 'doaj' in af.src or af.wikidata_in_doaj
+        altoa.embargo_months = 0
+        altoa.provenance = {oa_evidence: 'In DOAJ'}
+      if typeof altoa.licence is 'string'
+        altoa.licence = altoa.licence.toLowerCase().trim()
+        if altoa.licence.indexOf('cc') is 0
+          altoa.licence = altoa.licence.replace(/ /g, '-')
+        else if altoa.licence.indexOf('creative') isnt -1
+          altoa.licence = if altoa.licence.indexOf('0') isnt -1 or altoa.licence.indexOf('zero') isnt -1 then 'cc0' else if altoa.licence.indexOf('share') isnt -1 then 'ccbysa' else if altoa.licence.indexOf('derivative') isnt -1 then 'ccbynd' else 'ccby'
+        else
+          delete altoa.licence
+      else
+        delete altoa.licence
+      if altoa.licence
+        altoa.licences = [{type: altoa.licence, terms: ""}]
+      altoa.score = _score altoa
+      perms.all_permissions.push altoa
+
+  if haddoi and meta.doi and oadoi = API.use.oadoi.doi meta.doi, false
+    # use oadoi for specific doi
+    if oadoi?.best_oa_location?.license and oadoi.best_oa_location.license.indexOf('cc') isnt -1
+      doa =
+        can_archive: true
+        version: oadoi.best_oa_location.version
+        versions: []
+        licence: oadoi.best_oa_location.license
+        licence_terms: ""
+        licences: []
+        locations: ['institutional repository']
+        issuer:
+          type: 'article'
+          has_policy: 'yes'
+          id: meta.doi
+        meta:
+          creator: ['support@unpaywall.org']
+          contributors: ['support@unpaywall.org']
+          monitoring: 'Automatic'
+          updated: oadoi.best_oa_location.updated
+        provenance:
+          oa_evidence: oadoi.best_oa_location.evidence
+
+      if typeof doa.licence is 'string'
+        doa.licences = [{type: doa.licence, terms: ""}]
+      if doa.version
+        doa.versions = if doa.version in ['submittedVersion','preprint'] then ['submittedVersion'] else if doa.version in ['acceptedVersion','postprint'] then ['submittedVersion', 'acceptedVersion'] else  ['submittedVersion', 'acceptedVersion', 'publishedVersion']
+      doa.score = _score doa
+      perms.all_permissions.push doa
+
+  # sort rors by score, and sort alts by score, then combine
+  if perms.all_permissions.length
+    perms.all_permissions = _.sortBy(perms.all_permissions, 'score').reverse()
+    # note if enforcement_from is after published date, don't apply the permission. If no date, the permission applies to everything
+    for wp in perms.all_permissions
+      if not wp.provenance?.enforcement_from
+        perms.best_permission = JSON.parse JSON.stringify wp
+        break
+      else if not meta.published or moment(meta.published,'YYYY-MM-DD').isAfter(moment(wp.provenance.enforcement_from,'DD/MM/YYYY'))
+        perms.best_permission = JSON.parse JSON.stringify wp
+        break
+    if rors.length
+      rors = _.sortBy(rors, 'score').reverse()
+      for ro in rors
+        perms.all_permissions.push ro
+        if not perms.best_permission?.author_affiliation_requirement?
+          if perms.best_permission?
+            if not ro.provenance?.enforcement_from or not meta.published or moment(meta.published,'YYYY-MM-DD').isAfter(moment(ro.provenance.enforcement_from,'DD/MM/YYYY'))
+              pb = JSON.parse JSON.stringify perms.best_permission
+              for key in ['licences', 'versions', 'locations']
+                for vl in ro[key]
+                  pb[key] ?= []
+                  pb[key].push(vl) if vl not in pb[key]
+              for l in pb.licences ? []
+                pb.licence = l.type if not pb.licence? or l.type.length < pb.licence.length
+              pb.version = if 'publishedVersion' in pb.versions or 'publisher pdf' in pb.versions then 'publishedVersion' else if 'acceptedVersion' in pb.versions or 'postprint' in pb.versions then 'acceptedVersion' else 'submittedVersion'
+              if pb.embargo_end
+                if ro.embargo_end
+                  if moment(ro.embargo_end,"YYYY-MM-DD").isBefore(moment(pb.embargo_end,"YYYY-MM-DD"))
+                    pb.embargo_end = ro.embargo_end
+              if pb.embargo_months and ro.embargo_months? and ro.embargo_months < pb.embargo_months
+                pb.embargo_months = ro.embargo_months
+              pb.can_archive = true if ro.can_archive is true
+              pb.requirements ?= {}
+              pb.requirements.author_affiliation_requirement = if not meta.ror? then ro.issuer.id else if typeof meta.ror is 'string' then meta.ror else meta.ror[0]
+              pb.issuer.affiliation = ro.issuer
+              pb.meta ?= {}
+              pb.meta.affiliation = ro.meta
+              pb.provenance ?= {}
+              pb.provenance.affiliation = ro.provenance
+              pb.score = parseInt(pb.score) + parseInt(ro.score)
+              perms.best_permission = pb
+              perms.all_permissions.push pb
+
+  if file? or url?
+    # TODO file usage on new permissions API is still to be re-written
+    # is it possible file will already have been processed, if so can this step be shortened or avoided?
+    perms.file = API.service.oab.permission.file file, url, confirmed
+    try perms.lantern = API.service.lantern.licence('https://doi.org/' + meta.doi) if not perms.file?.licence and meta.doi? and 'doi.org' not in url
+    if perms.file.archivable? and perms.file.archivable isnt true and perms.lantern?.licence? and perms.lantern.licence.toLowerCase().indexOf('cc') is 0
+      perms.file.licence = perms.lantern.licence
+      perms.file.licence_evidence = {string_match: perms.lantern.match}
+      perms.file.archivable = true
+      perms.file.archivable_reason = 'We think that the splash page the DOI resolves to contains a ' + perms.lantern.licence + ' licence statement which confirms this article can be archived'
+    if perms.file.archivable and not perms.file.licence?
+      if perms.best_permission.licence
+        perms.file.licence = perms.best_permission.licence
+      else if perms.best_permission?.deposit_statement? and perms.best_permission.deposit_statement.toLowerCase().indexOf('cc') is 0
+        perms.file.licence = perms.best_permission.deposit_statement
+    perms.best_permission.licence ?= perms.file.licence if perms.file.licence
+    if not perms.file.archivable and perms.file.version?
+      if perms.best_permission?.version? and perms.file.version is perms.best_permission.version
+        f.archivable = true
+        f.archivable_reason = 'We believe this is a ' + perms.file.version + ' and our permission system says that version can be shared'
+      else
+        f.archivable_reason ?= 'We believe this file is a ' + perms.file.version + ' version and our permission system does not list that as an archivable version'
+
+  if overall_policy_restriction
+    msgs = 
+      'not publisher': 'Please find another DOI for this article as this is provided as this doesn’t allow us to find required information like who published it'
+    return
+      body: if typeof overall_policy_restriction isnt 'string' then overall_policy_restriction else msgs[overall_policy_restriction.toLowerCase()] ? overall_policy_restriction
+      status: 501
+  else
+    return perms
+
+
+
+# https://docs.google.com/spreadsheets/d/1qBb0RV1XgO3xOQMdHJBAf3HCJlUgsXqDVauWAtxde4A/edit
+API.service.oab.permission.import = (reload=false, src, stale=3600000) ->
+  # unfortunately for now there appears to be no way to uniquely identify a record
+  # so if ANY show last updated in the last day, reload them all
+  reload = true
+
+  since = Date.now()-86400010 # 1 day and 10ms ago, just to give a little overlap
+  
+  keys = 
+    versionsarchivable: 'versions'
+    permissionsrequestcontactemail: 'permissions_contact'
+    archivinglocationsallowed: 'locations'
+    license: 'licence'
+    licencesallowed: 'licences'
+    'post-printembargo': 'embargo_months'
+    depositstatementrequired: 'deposit_statement'
+    copyrightowner: 'copyright_owner' # can be journal, publisher, affiliation or author
+    publicnotes: 'notes'
+    authoraffiliationrolerequirement: 'requirements.role'
+    authoraffiliationrequirement: 'requirements.affiliation'
+    authoraffiliationdepartmentrequirement: 'requirements.departmental_affiliation'
+    iffundedby: 'requirements.funder'
+    fundingproportionrequired: 'requirements.funding_proportion'
+    subjectcoverage: 'requirements.subject'
+    has_policy: 'issuer.has_policy'
+    permissiontype: 'issuer.type'
+    parentpolicy: 'issuer.parent_policy'
+    contributedby: 'meta.contributors'
+    recordlastupdated: 'meta.updated'
+    reviewers: 'meta.reviewer'
+    addedby: 'meta.creator'
+    monitoringtype: 'meta.monitoring'
+    policyfulltext: 'provenance.archiving_policy'
+    policylandingpage: 'provenance.archiving_policy_splash'
+    publishingagreement: 'provenance.sample_publishing_agreement'
+    publishingagreementsplash: 'provenance.sample_publishing_splash'
+    rights: 'provenance.author_rights'
+    embargolist: 'provenance.embargo_list'
+    policyfaq: 'provenance.faq'
+    miscsource: 'provenance.misc_source'
+    enforcementdate: 'provenance.enforcement_from'
+    example: 'provenance.example'
+
+  src ?= API.settings.service?.openaccessbutton?.permissions?.sheet
+  records = API.use.google.sheets.feed src, stale # get a new sheet if over an hour old
+  ready = []
+  for rec in records
+    nr = 
+      can_archive: false
+      version: undefined
+      versions: undefined
+      licence: undefined
+      licence_terms: undefined
+      licences: undefined
+      locations: undefined
+      embargo_months: undefined
+      embargo_end: undefined
+      deposit_statement: undefined
+      permission_required: undefined
+      permissions_contact: undefined
+      copyright_owner: undefined
+      copyright_name: undefined
+      copyright_year: undefined
+      notes: undefined
+      requirements: undefined
+      issuer: {}
+      meta: {}
+      provenance: undefined
+
+    try
+      rec.recordlastupdated = rec.recordlastupdated.trim()
+      if rec.recordlastupdated.indexOf(',') isnt -1
+        nd = false
+        for dt in rec.recordlastupdated.split ','
+          nd = dt.trim() if nd is false or moment(dt.trim(),'DD/MM/YYYY').isAfter(moment(nd,'DD/MM/YYYY'))
+        rec.recordlastupdated = nd if nd isnt false
+      nr.meta.updated = rec.recordlastupdated
+    nr.meta.updatedAt = moment(nr.meta.updated, 'DD/MM/YYYY').valueOf() if nr.meta.updated?
+
+    if reload or not nr.meta.updatedAt? or nr.meta.updatedAt > since
+      # the google feed import will lowercase these key names and remove whitespace, question marks, brackets too, but not dashes
+      nr.issuer.id = if rec.id.indexOf(',') isnt -1 then rec.id.split(',') else rec.id
+      if typeof nr.issuer.id isnt 'string'
+        cids = []
+        inaj = false
+        for nid in nr.issuer.id
+          nid = nid.trim()
+          if nr.issuer.type is 'journal' and nid.indexOf('-') isnt -1 and nid.indexOf(' ') is -1
+            nid = nid.toUpperCase()
+            if af = academic_journal.find 'issn.exact:"' + nid + '"'
+              inaj = true
+              for an in af.issn
+                cids.push(an) if an not in cids
+          cids.push(nid) if nid not in cids
+        nr.issuer.id = cids
+      nr.permission_required = rec.has_policy? and rec.has_policy.toLowerCase().indexOf('permission required') isnt -1
+  
+      for k of rec
+        if keys[k] and rec[k]? and rec[k].length isnt 0
+          nk = keys[k]
+          nv = undefined
+          if k is 'post-printembargo' # Post-Print Embargo - empty or number of months like 0, 12, 24
+            try
+              kn = parseInt rec[k].trim()
+              nv = kn if typeof kn is 'number' and not isNaN kn and kn isnt 0
+              nr.embargo_end = '' if nv? # just to allow neat output later - can't be calculated until compared to a particular article
+          else if k in ['journal', 'versionsarchivable', 'archivinglocationsallowed', 'licencesallowed', 'policyfulltext', 'contributedby', 'addedby', 'reviewers', 'iffundedby']
+            nv = []
+            for s in rcs = rec[k].trim().split ','
+              st = s.trim()
+              if k is 'licencesallowed'
+                if st.toLowerCase() isnt 'unclear'
+                  lc = type: st.toLowerCase()
+                  try lc.terms = rec.licenceterms.split(',')[rcs.indexOf(s)].trim() # these don't seem to exist any more...
+                  nv.push lc
+              else
+                if k is 'versionsarchivable'
+                  st = st.toLowerCase()
+                  st = 'submittedVersion' if st is 'preprint'
+                  st = 'acceptedVersion' if st is 'postprint'
+                  st = 'publishedVersion' if st is 'publisher pdf'
+                nv.push(if k in ['archivinglocationsallowed'] then st.toLowerCase() else st) if st.length and st not in nv
+          else if k not in ['recordlastupdated']
+            nv = rec[k].trim()
+          nv = nv.toLowerCase() if typeof nv is 'string' and (nv.toLowerCase() in ['yes','no'] or k in ['haspolicy','permissiontype','copyrightowner'])
+          nv = '' if k in ['copyrightowner','license'] and nv is 'unclear'
+          if nv?
+            if nk.indexOf('.') isnt -1
+              nps = nk.split '.'
+              nr[nps[0]] ?= {}
+              nr[nps[0]][[nps[1]]] = nv
+            else
+              nr[nk] = nv
+  
+      # Archived Full Text Link - a URL to a web archive link of the full text policy link (ever multiple?)
+      # Record First Added - date like 12/07/2017
+      # Post-publication Pre-print Update Allowed - string like No, Yes, could be empty (turn these to booleans?)
+      # Can Authors Opt Out - seems to be all empty, could presumably be Yes or No
+  
+      nr.licences ?= []
+      if not nr.licence
+        for l in nr.licences
+          if not nr.licence? or l.type.length < nr.licence.length
+            nr.licence = l.type
+            nr.licence_terms = l.terms
+      nr.versions ?= []
+      if nr.versions.length
+        nr.can_archive = true
+        nr.version = if 'acceptedVersion' in nr.versions or 'postprint' in nr.versions then 'acceptedVersion' else if 'publishedVersion' in nr.versions or 'publisher pdf' in nr.versions then 'publishedVersion' else 'submittedVersion'
+      nr.copyright_owner ?= nr.issuer?.type ? ''
+      nr.copyright_name ?= ''
+      nr.copyright_year ?= '' # the year of publication, to be added at result stage
+      ready.push(nr) if not _.isEmpty nr
+
+      # TODO if there is a provenance.example DOI look up the metadata for it and find the journal ISSN. 
+      # then have a search for ISSN be able to find that. Otherwise, we have coverage by publisher that 
+      # contains no journal info, so no way to go from ISSN to the stored record
+
+  if ready.length
+    if reload
+      # ideally want a unique ID per record so would only have to update the changed ones
+      # but as that is not yet possible, have to just dump and reload all
+      oab_permissions.remove '*'
+      oab_permissions.insert ready
+  API.mail.send
+    service: 'openaccessbutton'
+    from: 'natalia.norori@openaccessbutton.org'
+    to: 'mark@cottagelabs.com'
+    subject: 'OAB permissions import check complete'
+    text: 'Found ' + records.length + ' in sheet, imported ' + ready.length + ' records'
+  return ready.length
+
+# run import every day on the main machine
+_oab_permissions_import = () ->
+  if API.settings.cluster?.ip? and API.status.ip() not in API.settings.cluster.ip
+    API.log 'Setting up an OAB permissions import to run every day if not triggered by request on ' + API.status.ip()
+    Meteor.setInterval (() -> API.service.oab.permission.import()), 86400000
+Meteor.setTimeout _oab_permissions_import, 24000
+
+
+
+API.service.oab.permission.file = (file, url, confirmed) ->
+  f = {archivable: undefined, archivable_reason: undefined, version: 'unknown', same_paper: undefined, licence: undefined}
+
+  # handle different sorts of file passing
   if typeof file is 'string'
     file = data: file
   if _.isArray file
@@ -31,7 +630,6 @@ API.service.oab.permissions = (meta={}, file, url, confirmed, uid) ->
   if not file? and url?
     file = API.http.getFile url
 
-  f = {archivable: undefined, archivable_reason: undefined, version: 'unknown', version_standard: undefined, same_paper: undefined, licence: undefined}
   if file?
     file.name ?= file.filename
     try f.name = file.name
@@ -55,79 +653,6 @@ API.service.oab.permissions = (meta={}, file, url, confirmed, uid) ->
       try content ?= file.data
       try content = content.toString()
 
-  metad = false
-  if not meta.doi?
-    metad = true
-    meta = API.service.oab.metadata undefined, meta, content
-
-  if meta.doi? and not perms.ricks?
-    try
-      # https://rickscafe-api.herokuapp.com/permissions/doi/
-      #cached = API.http.cache meta.doi, 'ricks_permissions'
-      # permissions caching disabled for now
-      if false #cached and typeof cached is 'object' and cached.application?
-        perms.ricks = cached
-        API.log 'Permissions check found in Ricks cache for ' + meta.doi
-    if not perms.ricks?
-      ru = 'https://api.greenoait.org/permissions/doi/' + meta.doi
-      if typeof uid is 'object'
-        uc = uid
-      else if uid
-        try uc = API.service.oab.deposit.config uid
-      if uc? and typeof uc is 'object' and uc.ror?
-        ru += '?affiliation=' + uc.ror if uc.ror
-      API.log 'Permissions check connecting to Ricks for ' + ru
-      try
-        perms.ricks = HTTP.call('GET',ru).data.authoritative_permission
-        #try API.http.cache(meta.doi, 'ricks_permissions', perms.ricks) if perms.ricks?.application?
-      catch
-        API.log 'Permissions check connection to Ricks failed for ' + meta.doi
-        perms.error = 'Could not connect to Ricks'
-    try
-      perms.permissions.archiving_allowed = perms.ricks?.application?.can_archive_conditions?.versions_archivable? and ('postprint' in perms.ricks.application.can_archive_conditions.versions_archivable or 'publisher pdf' in perms.ricks.application.can_archive_conditions.versions_archivable)
-      perms.permissions.required_statement = perms.ricks.application.can_archive_conditions.deposit_statement_required_calculated if typeof perms.ricks?.application?.can_archive_conditions?.deposit_statement_required_calculated is 'string' and perms.ricks.application.can_archive_conditions.deposit_statement_required_calculated.indexOf('cc-') isnt 0
-      perms.permissions.licence_required = perms.ricks.application.can_archive_conditions.licenses_required[0] if perms.ricks?.application?.can_archive_conditions?.licenses_required?
-      perms.permissions.policy_full_text = perms.ricks.provenance.policy_full_text if perms.ricks?.provenance?.policy_full_text
-    try
-      if perms.permissions.archiving_allowed
-        perms.permissions.version_allowed = if 'publisher pdf' in perms.ricks.application.can_archive_conditions.versions_archivable then 'publisher pdf' else if 'postprint' in perms.ricks.application.can_archive_conditions.versions_archivable then 'postprint' else 'preprint'
-    try
-      for k of perms.ricks.application.can_archive_conditions # this can be simplified now that we don't lookf for embargo specific to allowed types
-        if k.indexOf('embargo_end') isnt -1 #and perms.ricks.application.can_archive_conditions[k] and perms.permissions.version_allowed is k.split('_embargo')[0].replace('_','').replace('publisherpdf','publisher pdf')
-          em = moment(perms.ricks.application.can_archive_conditions[k])
-          if em.isAfter(moment())
-            perms.permissions.embargo = em.format "YYYY-MM-DD"
-            break
-  if false and not perms.sherpa? # sherpa is turned off now - could use it as a fallback if ever ricks does not respond (but may need to update sherpa to their new api spec)
-    if not (meta.issn? or meta.journal?) and not metad
-      metad = true
-      meta = API.service.oab.metadata undefined, meta, content
-    if meta.issn? or meta.journal?
-      try perms.sherpa = API.use.sherpa.romeo.find(if meta.issn then {issn:meta.issn} else {title:meta.journal})
-      perms.permissions.archiving_allowed ?= perms.sherpa?.color in ['green','yellow','blue']
-      try
-        if perms.permissions.archiving_allowed
-          perms.permissions.version_allowed ?= if perms.sherpa.color is 'yellow' then 'preprint' else 'postprint'
-      try
-        for c in perms.sherpa.publisher.conditions
-          if c.toLowerCase().indexOf('embargo') isnt -1
-            parts = c.toLowerCase().replace(/-/g,' ').split()
-            months = 0
-            for p in parts
-              if not isNaN parseInt p
-                months = parseInt p
-                break
-            months = months * 12 if 'year' in parts or 'years' in parts
-            if months isnt 0
-              if not (meta.year? or meta.published?) and not metad
-                metad = true
-                meta = API.service.oab.metadata undefined, meta, content
-              if (meta.year? or meta.published?) and perms.permissions.version_allowed is (if 'pre' in parts then 'preprint' else if 'post' in parts then 'postprint' else if 'publisher' in parts then 'publisher pdf' else false)
-                pp = moment(if meta.published then meta.published else meta.year + '-12-01').add months, 'months'
-                if pp.isAfter(moment())
-                  perms.permissions.embargo = pp.format "YYYY-MM-DD"
-                  break
-
   if not content? and not confirmed
     if file? or url?
       f.error = file.error ? 'Could not extract any content'
@@ -140,161 +665,148 @@ API.service.oab.permissions = (meta={}, file, url, confirmed, uid) ->
 
     f.name ?= meta.title
     try f.checksum = crypto.createHash('md5').update(content, 'utf8').digest('base64')
-    seen = false
-    if f.checksum and perms.files?
-      for pf in perms.files
-        if pf.checksum is f.checksum
-          seen = true
-          break
-    if not seen
-      f.same_paper_evidence = {} # check if the file meets our expectations
-      try f.same_paper_evidence.words_count = content.split(' ').length # will need to be at least 500 words
-      try f.same_paper_evidence.words_more_than_threshold = if f.same_paper_evidence.words_count > 500 then true else false
-      try f.same_paper_evidence.doi_match = if meta.doi and lowercontentstart.indexOf(_clean meta.doi) isnt -1 then true else false # should have the doi in it near the front
-      if content and not f.same_paper_evidence.doi_match and not meta.title? and not metad
-        meta = API.service.oab.metadata undefined, meta, content # get at least title again if not already tried to get it, and could not find doi in the file
-      try f.same_paper_evidence.title_match = if meta.title and lowercontentstart.replace(/\./g,'').indexOf(_clean meta.title.replace(/ /g,'').replace(/\./g,'')) isnt -1 then true else false
-      if meta.author?
-        try
-          authorsfound = 0
-          f.same_paper_evidence.author_match = false
-          # get the surnames out if possible, or author name strings, and find at least one in the doc if there are three or less, or find at least two otherwise
-          meta.author = {name: meta.author} if typeof meta.author is 'string'
-          meta.author = [meta.author] if not _.isArray meta.author
-          for a in meta.author
-            if f.same_paper_evidence.author_match is true
-              break
-            else
-              try
-                an = (a.last ? a.lastname ? a.family ? a.surname ? a.name).trim().split(',')[0].split(' ')[0]
-                af = (a.first ? a.firstname ? a.given ? a.name).trim().split(',')[0].split(' ')[0]
-                inc = lowercontentstart.indexOf _clean an
-                if an.length > 2 and af.length > 0 and inc isnt -1 and lowercontentstart.substring(inc-20,inc+an.length+20).indexOf(_clean af) isnt -1
-                  authorsfound += 1
-                  if (meta.author.length < 3 and authorsfound is 1) or (meta.author.length > 2 and authorsfound > 1)
-                    f.same_paper_evidence.author_match = true
-                    break
-      if f.format?
-        for ft in formats
-          if f.format.indexOf(ft) isnt -1
-            f.same_paper_evidence.document_format = true
+    f.same_paper_evidence = {} # check if the file meets our expectations
+    try f.same_paper_evidence.words_count = content.split(' ').length # will need to be at least 500 words
+    try f.same_paper_evidence.words_more_than_threshold = if f.same_paper_evidence.words_count > 500 then true else false
+    try f.same_paper_evidence.doi_match = if meta.doi and lowercontentstart.indexOf(_clean meta.doi) isnt -1 then true else false # should have the doi in it near the front
+    #if content and not f.same_paper_evidence.doi_match and not meta.title?
+    #  meta = API.service.oab.metadata undefined, meta, content # get at least title again if not already tried to get it, and could not find doi in the file
+    try f.same_paper_evidence.title_match = if meta.title and lowercontentstart.replace(/\./g,'').indexOf(_clean meta.title.replace(/ /g,'').replace(/\./g,'')) isnt -1 then true else false
+    if meta.author?
+      try
+        authorsfound = 0
+        f.same_paper_evidence.author_match = false
+        # get the surnames out if possible, or author name strings, and find at least one in the doc if there are three or less, or find at least two otherwise
+        meta.author = {name: meta.author} if typeof meta.author is 'string'
+        meta.author = [meta.author] if not _.isArray meta.author
+        for a in meta.author
+          if f.same_paper_evidence.author_match is true
             break
-
-      f.same_paper = if f.same_paper_evidence.words_more_than_threshold and (f.same_paper_evidence.doi_match or f.same_paper_evidence.title_match or f.same_paper_evidence.author_match) and f.same_paper_evidence.document_format then true else false
-
-      if f.same_paper_evidence.words_count is 1 and f.format is 'pdf'
-        # there was likely a pdf file reading failure due to bad PDF formatting
-        f.same_paper_evidence.words_count = 0
-        f.archivable_reason = 'We could not find any text in the provided PDF. It is possible the PDF is a scan in which case text is only contained within images which we do not yet extract. Or, the PDF may have errors in it\'s structure which stops us being able to machine-read it'
-
-      f.version_evidence = score: 0, strings_checked: 0, strings_matched: []
-      try
-        # dev https://docs.google.com/spreadsheets/d/1XA29lqVPCJ2FQ6siLywahxBTLFaDCZKaN5qUeoTuApg/edit#gid=0
-        # live https://docs.google.com/spreadsheets/d/10DNDmOG19shNnuw6cwtCpK-sBnexRCCtD4WnxJx_DPQ/edit#gid=0
-        for l in API.use.google.sheets.feed (if API.settings.dev then '1XA29lqVPCJ2FQ6siLywahxBTLFaDCZKaN5qUeoTuApg' else '10DNDmOG19shNnuw6cwtCpK-sBnexRCCtD4WnxJx_DPQ')
-          try
-            f.version_evidence.strings_checked += 1
-            wts = l.whattosearch
-            if wts.indexOf('<<') isnt -1 and wts.indexOf('>>') isnt -1
-              wtm = wts.split('<<')[1].split('>>')[0]
-              wts = wts.replace('<<'+wtm+'>>',meta[wtm.toLowerCase()]) if meta[wtm.toLowerCase()]?
-            matched = false
-            if l.howtosearch is 'string'
-              #wtsc = _clean wts
-              #matched = if (l.wheretosearch is 'file' and _clean(lowercontentsmall).indexOf(wtsc) isnt -1) or (l.wheretosearch isnt 'file' and ((meta.title? and _clean(meta.title).indexOf(wtsc) isnt -1) or (f.name? and _clean(f.name).indexOf(wtsc) isnt -1))) then true else false
-              matched = if (l.wheretosearch is 'file' and contentsmall.indexOf(wts) isnt -1) or (l.wheretosearch isnt 'file' and ((meta.title? and meta.title.indexOf(wts) isnt -1) or (f.name? and f.name.indexOf(wts) isnt -1))) then true else false
-            else
-              # could change this to be explicit and not use lowercasing, if wanting more exactness
-              re = new RegExp wts, 'gium'
-              matched = if (l.wheretosearch is 'file' and lowercontentsmall.match(re) isnt null) or (l.wheretosearch isnt 'file' and ((meta.title? and meta.title.match(re) isnt null) or (f.name? and f.name.match(re) isnt null))) then true else false
-            if matched
-              sc = l.score ? l.score_value
-              if typeof sc is 'string'
-                try sc = parseInt sc
-              sc = 1 if typeof sc isnt 'number'
-              if l.whatitindicates is 'publisher pdf' then f.version_evidence.score += sc else f.version_evidence.score -= sc
-              f.version_evidence.strings_matched.push {indicates: l.whatitindicates, found: l.howtosearch + ' ' + wts, in: l.wheretosearch, score_value: sc}
-
-      f.version = 'publisher pdf' if f.version_evidence.score > 0
-      f.version = 'postprint' if f.version_evidence.score < 0
-      if f.version is 'unknown' and f.version_evidence.strings_checked > 0 #and f.format? and f.format isnt 'pdf'
-        f.version = 'postprint'
-      f.version_standard = if f.version is 'preprint' then 'submittedVersion' else if f.version is 'postprint' then 'acceptedVersion' else if f.version is 'publisher pdf' then 'publishedVersion' else undefined
-
-      try
-        ls = API.service.lantern.licence undefined, undefined, lowercontentsmall # check lantern for licence info in the file content
-        if ls?.licence?
-          f.licence = ls.licence
-          f.licence_evidence = {string_match: ls.match}
-        f.lantern = ls
-
-      f.archivable = false
-      if confirmed
-        f.archivable = true
-        if confirmed is f.checksum
-          f.archivable_reason = 'The administrator has confirmed that this file is a version that can be archived.'
-          f.admin_confirms = true
-        else
-          f.archivable_reason = 'The depositor says that this file is a version that can be archived'
-          f.depositor_says = true
-      else if f.same_paper
-        if f.format isnt 'pdf'
-          f.archivable = true
-          f.archivable_reason = 'Since the file is not a PDF, we assume it is a Postprint.'
-        else
-          if perms.ricks?.application?.can_archive_conditions?.versions_archivable? # the version we can tell it is appears to meet what Rick says can be posted
-            if f.version in perms.ricks.application.can_archive_conditions.versions_archivable or f.version is 'postprint' and 'postprint' in perms.ricks.application.can_archive_conditions.versions_archivable
-              f.archivable = true
-              f.archivable_reason = 'We believe this is a ' + f.version + ' and our permission system says that version can be shared'
-            else
-              f.archivable_reason = 'We believe this file is a ' + f.version + ' version and our permission system does not list that as an archivable version'
-
-          # https://github.com/OAButton/discussion/issues/1377
-          if not f.archivable and perms.sherpa?
-            if perms.sherpa.color is 'green'
-              if f.version in ['preprint','postprint']
-                f.archivable = true
-                f.archivable_reason = 'Sherpa Romeo color is ' + perms.sherpa.color + ' so ' + f.version + ' is archivable'
-              else
-                f.archivable_reason = 'Sherpa Romeo color is ' + perms.sherpa.color + ' which allows only preprint or postprint but version is ' + f.version
-            else if perms.sherpa.color is 'blue'
-              if f.version in ['postprint']
-                f.archivable = true
-                f.archivable_reason = 'Sherpa Romeo color is ' + perms.sherpa.color + ' so ' + f.version + ' is archivable'
-              else
-                f.archivable_reason = 'Sherpa Romeo color is ' + perms.sherpa.color + ' which allows only postprint but version is ' + f.version
-            else if perms.sherpa?.color is 'yellow'
-              if f.version in ['preprint']
-                f.archivable = true
-                f.archivable_reason = 'Sherpa Romeo color is ' + perms.sherpa.color + ' so ' + f.version + ' is archivable'
-              else
-                f.archivable_reason = 'Sherpa Romeo color is ' + perms.sherpa.color + ' which allows only preprint but version is ' + f.version
-
-        if not f.archivable and f.licence? and f.licence.toLowerCase().indexOf('cc') is 0
-          f.archivable = true
-          f.archivable_reason = 'It appears this file contains a ' + f.lantern.licence + ' licence statement. Under this licence the article can be archived'
-        if not f.archivable
-          if f.version is 'publisher pdf'
-            f.archivable_reason = 'The file given is a Publisher PDF, and only postprints are allowed'
           else
-            f.archivable_reason = 'We cannot confirm if it is an archivable version or not'
+            try
+              an = (a.last ? a.lastname ? a.family ? a.surname ? a.name).trim().split(',')[0].split(' ')[0]
+              af = (a.first ? a.firstname ? a.given ? a.name).trim().split(',')[0].split(' ')[0]
+              inc = lowercontentstart.indexOf _clean an
+              if an.length > 2 and af.length > 0 and inc isnt -1 and lowercontentstart.substring(inc-20,inc+an.length+20).indexOf(_clean af) isnt -1
+                authorsfound += 1
+                if (meta.author.length < 3 and authorsfound is 1) or (meta.author.length > 2 and authorsfound > 1)
+                  f.same_paper_evidence.author_match = true
+                  break
+    if f.format?
+      for ft in ['doc','tex','pdf','htm','xml','txt','rtf','odf','odt','page']
+        if f.format.indexOf(ft) isnt -1
+          f.same_paper_evidence.document_format = true
+          break
+
+    f.same_paper = if f.same_paper_evidence.words_more_than_threshold and (f.same_paper_evidence.doi_match or f.same_paper_evidence.title_match or f.same_paper_evidence.author_match) and f.same_paper_evidence.document_format then true else false
+
+    if f.same_paper_evidence.words_count is 1 and f.format is 'pdf'
+      # there was likely a pdf file reading failure due to bad PDF formatting
+      f.same_paper_evidence.words_count = 0
+      f.archivable_reason = 'We could not find any text in the provided PDF. It is possible the PDF is a scan in which case text is only contained within images which we do not yet extract. Or, the PDF may have errors in it\'s structure which stops us being able to machine-read it'
+
+    f.version_evidence = score: 0, strings_checked: 0, strings_matched: []
+    try
+      # dev https://docs.google.com/spreadsheets/d/1XA29lqVPCJ2FQ6siLywahxBTLFaDCZKaN5qUeoTuApg/edit#gid=0
+      # live https://docs.google.com/spreadsheets/d/10DNDmOG19shNnuw6cwtCpK-sBnexRCCtD4WnxJx_DPQ/edit#gid=0
+      for l in API.use.google.sheets.feed (if API.settings.dev then '1XA29lqVPCJ2FQ6siLywahxBTLFaDCZKaN5qUeoTuApg' else '10DNDmOG19shNnuw6cwtCpK-sBnexRCCtD4WnxJx_DPQ')
+        try
+          f.version_evidence.strings_checked += 1
+          wts = l.whattosearch
+          if wts.indexOf('<<') isnt -1 and wts.indexOf('>>') isnt -1
+            wtm = wts.split('<<')[1].split('>>')[0]
+            wts = wts.replace('<<'+wtm+'>>',meta[wtm.toLowerCase()]) if meta[wtm.toLowerCase()]?
+          matched = false
+          if l.howtosearch is 'string'
+            #wtsc = _clean wts
+            #matched = if (l.wheretosearch is 'file' and _clean(lowercontentsmall).indexOf(wtsc) isnt -1) or (l.wheretosearch isnt 'file' and ((meta.title? and _clean(meta.title).indexOf(wtsc) isnt -1) or (f.name? and _clean(f.name).indexOf(wtsc) isnt -1))) then true else false
+            matched = if (l.wheretosearch is 'file' and contentsmall.indexOf(wts) isnt -1) or (l.wheretosearch isnt 'file' and ((meta.title? and meta.title.indexOf(wts) isnt -1) or (f.name? and f.name.indexOf(wts) isnt -1))) then true else false
+          else
+            # could change this to be explicit and not use lowercasing, if wanting more exactness
+            re = new RegExp wts, 'gium'
+            matched = if (l.wheretosearch is 'file' and lowercontentsmall.match(re) isnt null) or (l.wheretosearch isnt 'file' and ((meta.title? and meta.title.match(re) isnt null) or (f.name? and f.name.match(re) isnt null))) then true else false
+          if matched
+            sc = l.score ? l.score_value
+            if typeof sc is 'string'
+              try sc = parseInt sc
+            sc = 1 if typeof sc isnt 'number'
+            if l.whatitindicates is 'publisher pdf' then f.version_evidence.score += sc else f.version_evidence.score -= sc
+            f.version_evidence.strings_matched.push {indicates: l.whatitindicates, found: l.howtosearch + ' ' + wts, in: l.wheretosearch, score_value: sc}
+
+    f.version = 'publishedVersion' if f.version_evidence.score > 0
+    f.version = 'acceptedVersion' if f.version_evidence.score < 0
+    if f.version is 'unknown' and f.version_evidence.strings_checked > 0 #and f.format? and f.format isnt 'pdf'
+      f.version = 'acceptedVersion'
+
+    try
+      ls = API.service.lantern.licence undefined, undefined, lowercontentsmall # check lantern for licence info in the file content
+      if ls?.licence?
+        f.licence = ls.licence
+        f.licence_evidence = {string_match: ls.match}
+      f.lantern = ls
+
+    f.archivable = false
+    if confirmed
+      f.archivable = true
+      if confirmed is f.checksum
+        f.archivable_reason = 'The administrator has confirmed that this file is a version that can be archived.'
+        f.admin_confirms = true
       else
-        f.archivable_reason ?= if not f.same_paper_evidence.words_more_than_threshold then 'The file is less than 500 words, and so does not appear to be a full article' else if not f.same_paper_evidence.document_format then 'File is an unexpected format ' + f.format else if not meta.doi and not meta.title then 'We have insufficient metadata to validate file is for the correct paper ' else 'File does not contain expected metadata such as DOI or title'
+        f.archivable_reason = 'The depositor says that this file is a version that can be archived'
+        f.depositor_says = true
+    else if f.same_paper
+      if f.format isnt 'pdf'
+        f.archivable = true
+        f.archivable_reason = 'Since the file is not a PDF, we assume it is a Postprint.'
+      if not f.archivable and f.licence? and f.licence.toLowerCase().indexOf('cc') is 0
+        f.archivable = true
+        f.archivable_reason = 'It appears this file contains a ' + f.lantern.licence + ' licence statement. Under this licence the article can be archived'
+      if not f.archivable
+        if f.version is 'publishedVersion'
+          f.archivable_reason = 'The file given is a Publisher PDF, and only postprints are allowed'
+        else
+          f.archivable_reason = 'We cannot confirm if it is an archivable version or not'
+    else
+      f.archivable_reason ?= if not f.same_paper_evidence.words_more_than_threshold then 'The file is less than 500 words, and so does not appear to be a full article' else if not f.same_paper_evidence.document_format then 'File is an unexpected format ' + f.format else if not meta.doi and not meta.title then 'We have insufficient metadata to validate file is for the correct paper ' else 'File does not contain expected metadata such as DOI or title'
 
-  try perms.lantern = API.service.lantern.licence('https://doi.org/' + meta.doi) if not f.licence and meta.doi? and 'doi.org' not in url
-  if f.archivable isnt undefined and f.archivable isnt true and perms.lantern?.licence? and perms.lantern.licence.toLowerCase().indexOf('cc') is 0
-    f.licence = perms.lantern.licence
-    f.licence_evidence = {string_match: perms.lantern.match}
-    f.archivable = true
-    f.archivable_reason = 'We think that the splash page the DOI resolves to contains a ' + perms.lantern.licence + ' licence statement which confirms this article can be archived'
+  return f
 
-  if f.archivable and not f.licence?
-    if perms.ricks?.application?.can_archive_conditions?.deposit_statement_required_calculated? and perms.ricks.application.can_archive_conditions.deposit_statement_required_calculated.indexOf('cc') is 0
-        f.licence = perms.ricks.application.can_archive_conditions.deposit_statement_required_calculated
-    else if perms.sherpa?.publisher?.alias? and perms.sherpa.publisher.alias.toLowerCase().indexOf('cc-') isnt -1
-      f.licence = 'cc-' + perms.sherpa.publisher.alias.toLowerCase().split('cc-')[1].split(' ')[0]
 
-  perms.permissions.licence_required ?= f.licence if f.licence
 
-  perms.file = f if not _.isEmpty f
-  return perms
+API.service.oab.permission.test = (email) ->
+  res = {tests: 0, same: 0, results: {}}
+  for test in ts = API.use.google.sheets.feed '1vuzkrvbd2U3stLBGXMIHE_mtZ5J3YUhyRZEf08mNtM8', 0
+    break if res.tests > 2
+    if test.doi and test.doi.startsWith('10.') and test.responseurl
+      console.log res.tests
+      res.tests += 1
+      res.results[test.doi] = {}
+      try
+        perms = API.service.oab.permission(doi: test.doi.split('?')[0], ror: (if test.doi.indexOf('?') isnt -1 then test.doi.split('?')[1].split('=')[1] else undefined)).best_permission
+      catch
+        perms = {}
+      try
+        ricks = HTTP.call('GET', test.responseurl).data.authoritative_permission.application
+      catch
+        ricks = {}
+      if perms? and ricks?
+        diffs = {}
+        for k in ['can_archive']
+          if not perms[k]? or not ricks[k]? or perms[k] isnt ricks[k]
+            diffs[k] = [perms[k],ricks[k]]
+        if _.isEmpty diffs
+          res.same += 1
+          res.results[test.doi].same = true
+        else
+          res.results[test.doi].same = false
+          res.results[test.doi].diffs = diffs
+        res.results[test.doi].perms = perms
+        res.results[test.doi].ricks = ricks
+
+  API.mail.send
+    service: 'openaccessbutton'
+    from: 'natalia.norori@openaccessbutton.org'
+    to: email ? 'alert@cottagelabs.com'
+    subject: 'OAB permissions test complete'
+    text: JSON.stringify res, '', 2
+  return res
