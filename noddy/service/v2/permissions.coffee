@@ -176,11 +176,10 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
   meta.issn = meta.issn.split(',') if typeof meta.issn is 'string' and meta.issn.indexOf(',') isnt -1
   meta.ror = meta.ror.split(',') if typeof meta.ror is 'string' and meta.ror.indexOf(',') isnt -1
   
-  ror = meta.ror ? false
-  if ror is false
+  if not meta.ror
     uc = if typeof roruid is 'object' then roruid else if typeof roruid is 'string' then API.service.oab.deposit.config(roruid) else undefined
     if (typeof uc is 'object' and uc.ror?) or typeof roruid is 'string'
-      ror = uc?.ror ? roruid
+      meta.ror = uc?.ror ? roruid
 
   if _.isEmpty(meta) or (meta.issn and JSON.stringify(meta.issn).indexOf('-') is -1) or (meta.doi and (typeof meta.doi isnt 'string' or meta.doi.indexOf('10.') isnt 0 or meta.doi.indexOf('/') is -1))
     return body: 'No valid DOI, ISSN, or ROR provided', statusCode: 404
@@ -191,14 +190,13 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
     psm = JSON.parse JSON.stringify meta
     delete psm.ror
     if not _.isEmpty psm
-      try
-        rsm = API.service.oab.metadata {metadata: ['crossref_type','issn','publisher','published','year','author']}, psm
-        for mk of rsm
-          if mk not in ['ror']
-            meta[mk] ?= rsm[mk]
+      rsm = API.service.oab.metadata {metadata: ['crossref_type','issn','publisher','published','year','author']}, psm
+      for mk of rsm
+        if mk not in ['ror']
+          meta[mk] ?= rsm[mk]
   _getmeta() if getmeta isnt false and meta.doi and (not meta.publisher or not meta.issn)
   meta.published = meta.year + '-01-01' if not meta.published and meta.year
-  haddoi = meta.doi
+  haddoi = meta.doi?
   af = false
   if meta.issn
     meta.issn = [meta.issn] if typeof meta.issn is 'string'
@@ -407,7 +405,7 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
   if file? or url?
     # TODO file usage on new permissions API is still to be re-written
     # is it possible file will already have been processed, if so can this step be shortened or avoided?
-    perms.file = API.service.oab.permission.file file, url, confirmed
+    perms.file = API.service.oab.permission.file file, url, confirmed, meta
     try perms.lantern = API.service.lantern.licence('https://doi.org/' + meta.doi) if not perms.file?.licence and meta.doi? and 'doi.org' not in url
     if perms.file.archivable? and perms.file.archivable isnt true and perms.lantern?.licence? and perms.lantern.licence.toLowerCase().indexOf('cc') is 0
       perms.file.licence = perms.lantern.licence
@@ -420,12 +418,12 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
       else if perms.best_permission?.deposit_statement? and perms.best_permission.deposit_statement.toLowerCase().indexOf('cc') is 0
         perms.file.licence = perms.best_permission.deposit_statement
     perms.best_permission.licence ?= perms.file.licence if perms.file.licence
-    if not perms.file.archivable and perms.file.version?
+    if perms.file.same_paper and not perms.file.archivable and perms.file.version?
       if perms.best_permission?.version? and perms.file.version is perms.best_permission.version
-        f.archivable = true
-        f.archivable_reason = 'We believe this is a ' + perms.file.version + ' and our permission system says that version can be shared'
+        perms.file.archivable = true
+        perms.file.archivable_reason = 'We believe this is a ' + perms.file.version + ' and our permission system says that version can be shared'
       else
-        f.archivable_reason ?= 'We believe this file is a ' + perms.file.version + ' version and our permission system does not list that as an archivable version'
+        perms.file.archivable_reason ?= 'We believe this file is a ' + perms.file.version + ' version and our permission system does not list that as an archivable version'
 
   if overall_policy_restriction
     msgs = 
@@ -619,7 +617,7 @@ Meteor.setTimeout _oab_permissions_import, 24000
 
 
 
-API.service.oab.permission.file = (file, url, confirmed) ->
+API.service.oab.permission.file = (file, url, confirmed, meta={}) ->
   f = {archivable: undefined, archivable_reason: undefined, version: 'unknown', same_paper: undefined, licence: undefined}
 
   # handle different sorts of file passing

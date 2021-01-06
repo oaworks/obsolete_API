@@ -18,7 +18,7 @@ _deposits = (params,uid,deposited,csv) ->
   delete params.uid if params.uid?
   params.size ?= 10000
   params.sort ?= 'createdAt:asc'
-  fields = ['metadata','permissions.permissions','permissions.ricks','permissions.file','deposit','url']
+  fields = ['metadata','permissions.permissions','permissions.ricks','permissions.best_permission','permissions.file','deposit','url']
   if params.fields
     fields = params.fields.split ','
     delete params.fields
@@ -174,7 +174,7 @@ API.service.oab.deposit = (d, options={}, files, uid) ->
 
   uc = if options.config? then options.config else if dep.from? and dep.from isnt 'anonymous' then API.service.oab.deposit.config(dep.from) else false
 
-  perms = API.service.oab.permissions d, files, undefined, dep.confirmed # if confirmed is true the submitter has confirmed this is the right file. If confirmed is the checksum this is a resubmit by an admin
+  perms = API.service.oab.permission d, files, undefined, dep.confirmed # if confirmed is true the submitter has confirmed this is the right file. If confirmed is the checksum this is a resubmit by an admin
   if perms.file?.archivable and ((dep.confirmed? and dep.confirmed is perms.file.checksum) or not dep.confirmed) #or (dep.confirmed and API.settings.dev)) # if the depositor confirms we don't deposit, we manually review - only deposit on admin confirmation (but on dev allow it)
     zn = {}
     zn.content = files[0].data
@@ -217,10 +217,13 @@ API.service.oab.deposit = (d, options={}, files, uid) ->
       meta.prereserve_doi = true
     meta['access_right'] = 'open'
     meta.license = perms.best_permission?.licence ? 'cc-by' # zenodo also accepts other-closed and other-nc, possibly more
+    meta.license = 'other-closed' if meta.license.indexOf('other') isnt -1 and meta.license.indexOf('closed') isnt -1
+    meta.license = 'other-nc' if meta.license.indexOf('other') isnt -1 and meta.license.indexOf('non') isnt -1 and meta.license.indexOf('commercial') isnt -1
     meta.license += '-4.0' if meta.license.toLowerCase().indexOf('cc') is 0 and isNaN(parseInt(meta.license.substring(meta.license.length-1)))
-    if perms.best_permission?.embargo_end
-      meta['access_right'] = 'embargoed'
-      meta['embargo_date'] = perms.best_permission.embargo_end # check date format required by zenodo
+    try
+      if perms.best_permission?.embargo_end and moment(perms.best_permission.embargo_end,'YYYY-MM-DD').valueOf() > Date.now()
+        meta['access_right'] = 'embargoed'
+        meta['embargo_date'] = perms.best_permission.embargo_end # check date format required by zenodo
     try meta['publication_date'] = d.metadata.published if d.metadata.published? and typeof d.metadata.published is 'string'
     if uc isnt false
       uc.community = uc.community_ID if uc.community_ID? and not uc.community?
@@ -248,7 +251,7 @@ API.service.oab.deposit = (d, options={}, files, uid) ->
       dep.error = 'No Zenodo credentials available'
   dep.version = perms.file.version if perms.file?.version?
   if dep.zenodo.id
-    if perms.best_permission?.embargo_end
+    if perms.best_permission?.embargo_end and moment(perms.best_permission.embargo_end,'YYYY-MM-DD').valueOf() > Date.now()
       dep.embargo = perms.best_permission.embargo_end
     dep.type = 'zenodo'
   else if dep.error? and dep.error.toLowerCase().indexOf('zenodo') isnt -1

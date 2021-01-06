@@ -207,7 +207,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
         delete info.author if typeof info.author is 'string'
         delete info.author if _.isArray(info.author) and info.author.length > 0 and typeof info.author[0] is 'string'
       for i of info
-        metadata[i] ?= info[i] if typeof info[i] is 'string' or _.isArray info[i] # not expecting objects back here by this point
+        metadata[i] ?= info[i] if i not in ['ror'] and (typeof info[i] is 'string' or _.isArray info[i]) # not expecting objects back here by this point
 
 
   # prepare all the incoming metadata and options for use ======================
@@ -355,7 +355,8 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       delete catalogued.metadata.url if _.isArray catalogued.metadata?.url
     # if user wants a total refresh, don't use any of it (we still search for it though, because will overwrite later with the fresh stuff)
     if catalogued? and res.refresh isnt 0
-      res.permissions ?= catalogued.permissions if catalogued.permissions?.best_permission? and not _.isEmpty(catalogued.permissions.best_permission) and (catalogued.metadata?.journal? or catalogued.metadata?.issn?)
+      # decided to disable using cached permissions, calculating them is fast now anyway. To re-enable, would have to take account of RORs etc
+      #res.permissions ?= catalogued.permissions if catalogued.permissions?.best_permission? and not _.isEmpty(catalogued.permissions.best_permission) and (catalogued.metadata?.journal? or catalogued.metadata?.issn?)
       if 'oabutton' in res.sources
         if catalogued.url? # within or without refresh time, if we have already found it, re-use it
           _get.metadata catalogued.metadata
@@ -390,15 +391,17 @@ API.service.oab.find = (options={}, metadata={}, content) ->
             else
               content = API.convert.pdf2txt(bing.data[0].url)
               content = content.substring(0,1000) if content.length > 1000
-              content = content.toLowerCase().replace(/[^a-z0-9]+/g, "").replace(/\s\s+/g, '')
+              content = content.toLowerCase().replace(/[^a-z0-9]/g,"").replace(/\s\s+/g, '')
               if content.indexOf(mct.replace(/ /g, '')) isnt -1
                 options.url = bing.data[0].url.replace(/"/g,'')
                 try
                   _get.content()
                   done.content = true
+                res.url = options.url # is it safe to use these as open URLs?
           catch
             options.url = bing.data[0].url.replace(/"/g,'')
-          metadata.pmid = options.url.replace(/\/$/,'').split('/').pop() if options.url.indexOf('pubmed.ncbi') isnt -1
+          metadata.pmid = options.url.replace(/\/$/,'').split('/').pop() if typeof options.url is 'string' and options.url.indexOf('pubmed.ncbi') isnt -1
+          metadata.doi ?= '10.' + options.url.split('/10.')[1] if typeof options.url is 'string' and options.url.indexOf('/10.') isnt -1
 
   _get.content = () ->
     _get.metadata API.service.oab.scrape undefined, content 
@@ -426,26 +429,29 @@ API.service.oab.find = (options={}, metadata={}, content) ->
     else if not _got() or (res.find and not res.url) # check again due to any delay in loops
       try
         rs = false
-        if src is 'oadoi' and  which is 'doi' and metadata[which]?
-          rs = API.use.oadoi.doi metadata.doi, true
-        else if src is 'crossref' and which in ['doi','title']
-          # crossref title lookup can accept full metadata object to compare additional metadata possibly in a citation
-          if which is 'title'
-            if options.citation?
-              mq = JSON.parse JSON.stringify metadata
-              mq.citation = options.citation
+        if src is 'oadoi'
+          if which is 'doi' and metadata.doi?
+            rs = API.use.oadoi.doi metadata.doi, true
+        else if src is 'crossref'
+          if which in ['doi','title']
+            # crossref title lookup can accept full metadata object to compare additional metadata possibly in a citation
+            if which is 'title'
+              if options.citation?
+                mq = JSON.parse JSON.stringify metadata
+                mq.citation = options.citation
+              else
+                mq = metadata.title
             else
-              mq = metadata.title
-          else
-            mq = metadata.doi
-          rs = API.use.crossref.works[which] mq, true
-          if which is 'doi' and not rs?.crossref_type
-            res.doi_not_in_crossref = metadata.doi
-            delete options.url if typeof options.url is 'string' and options.url.indexOf('doi.org/' + metadata.doi) isnt -1
-            delete metadata.doi
-            delete options.doi
+              mq = metadata.doi
+            rs = API.use.crossref.works[which] mq, true
+            if which is 'doi' and not rs?.crossref_type
+              res.doi_not_in_crossref = metadata.doi
+              delete options.url if typeof options.url is 'string' and options.url.indexOf('doi.org/' + metadata.doi) isnt -1
+              delete metadata.doi
+              delete options.doi
         else if src is 'epmc'
-          rs = API.use.europepmc[if which is 'id' then (if metadata.pmcid then 'pmc' else 'pmid') else which] (if which is 'id' then (metadata.pmcid ? metadata.pmid) else metadata[which]), true
+          if which isnt 'doi' # don't bother with epmc lookup on DOI, as it will come back faster from other sources
+            rs = API.use.europepmc[if which is 'id' then (if metadata.pmcid then 'pmc' else 'pmid') else which] (if which is 'id' then (metadata.pmcid ? metadata.pmid) else metadata[which]), true
         else if typeof API.use[src]?[which] is 'function' and metadata[which]?
           # other possible sources to check title or doi are ['base','dissemin','share','core','openaire','fighsare'] 
           # but we do not use them by default any more
@@ -546,7 +552,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       else
         fnd.catalogue = oab_catalogue.insert data
     fndc = JSON.parse JSON.stringify fnd
-    delete fnd.permissions # don't store permissions in finds, only in catalogue
+    #delete fnd.permissions # don't store permissions in finds, only in catalogue - not storing them at all now
     oab_find.insert fnd
   _sv = (id, data, fnd) -> Meteor.setTimeout (() -> _save(id, data, fnd)), 1
 
@@ -599,7 +605,8 @@ API.service.oab.find = (options={}, metadata={}, content) ->
         upd.found = JSON.parse JSON.stringify res.found
         for cf of catalogued.found
           upd.found[cf] ?= catalogued.found[cf]
-      upd.permissions = res.permissions if res.permissions?.best_permission? and not _.isEmpty(res.permissions.best_permission) and (not catalogued.permissions? or not _.isEqual res.permissions, catalogued.permissions)
+      # not saving permissions any more
+      #upd.permissions = res.permissions if res.permissions?.best_permission? and not _.isEmpty(res.permissions.best_permission) and (not catalogued.permissions? or not _.isEqual res.permissions, catalogued.permissions)
       upd.usermetadata = res.usermetadata if res.usermetadata?
       if typeof metadata.title is 'string'
         ftm = API.service.oab.ftitle(metadata.title)
@@ -613,7 +620,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
         sources: res.sources
         checked: res.checked
         found: res.found
-        permissions: res.permissions if res.permissions?.best_permission? and not _.isEmpty res.permissions.best_permission
+        #permissions: res.permissions if res.permissions?.best_permission? and not _.isEmpty res.permissions.best_permission
       fl.ftitle = API.service.oab.ftitle(metadata.title) if typeof metadata.title is 'string'
       fl.usermetadata = res.usermetadata if res.usermetadata?
       _sv undefined, fl, res
