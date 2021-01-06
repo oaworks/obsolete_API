@@ -355,7 +355,7 @@ API.service.oab.template = (template,refresh) ->
   else
     return API.mail.template {service:'openaccessbutton'}
 # run a template refresh on every restart
-Meteor.setTimeout (() -> API.service.oab.template(undefined, true) if API.status.ip() not in (API.settings.cluster.ip ? [])), 4000
+Meteor.setTimeout (() -> API.service.oab.template(undefined, true) if API.status.ip() not in (API.settings.cluster.ip ? [])), 40000
 
 API.service.oab.validate = (email, domain, verify=true) ->
   bad = ['eric@talkwithcustomer.com']
