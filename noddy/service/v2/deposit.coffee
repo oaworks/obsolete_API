@@ -232,7 +232,7 @@ API.service.oab.deposit = (d, options={}, files, uid) ->
         uc.communities.push({identifier: ccm}) for ccm in (if typeof uc.community is 'string' then uc.community.split(',') else uc.community)
       if uc.community? or uc.communities?
         uc.communities ?= uc.community
-        uc.communities = [uc.communities] if typeof uc.communities is 'string'
+        uc.communities = [uc.communities] if not Array.isArray uc.communities
         meta['communities'] = []
         meta.communities.push(if typeof com is 'string' then {identifier: com} else com) for com in uc.communities
     tk = if API.settings.dev or dep.demo then API.settings.service.openaccessbutton?.zenodo?.sandbox else API.settings.service.openaccessbutton?.zenodo?.token

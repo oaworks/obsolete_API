@@ -45,13 +45,7 @@ API.add 'service/academic/journal/load',
   get: 
     roleRequired: if API.settings.dev then undefined else 'openaccessbutton.admin'
     action: () -> 
-      Meteor.setTimeout (() => API.service.academic.journal.load this.queryParams.sources, this.queryParams.refresh, this.queryParams.doajrefresh, this.queryParams.titles), 1
-      return true
-API.add 'service/academic/journal/load/examples', 
-  get: 
-    roleRequired: if API.settings.dev then undefined else 'openaccessbutton.admin'
-    action: () -> 
-      Meteor.setTimeout (() => API.service.academic.journal.load.examples()), 1
+      Meteor.setTimeout (() => API.service.academic.journal.load this.queryParams.sources), 1
       return true
 API.add 'service/academic/journal/load_oa', 
   get: 
@@ -196,7 +190,7 @@ API.service.academic.institution.suggest = (str, from, size=100) ->
   q.from = from if from?
   if str
     str = API.service.academic._clean(str).replace(/the /gi,'')
-    q.query.filtered.query.query_string = {query: (if str.indexOf(' ') is -1 then 'snaks.value.exact:"' + str + '" OR ' else '') + '(label:' + str.replace(/ /g,' AND label:') + '*) OR snaks.value:"' + str + '" OR description:"' + str + '"'}
+    q.query.filtered.query.query_string = {query: (if str.indexOf(' ') is -1 then 'snaks.value.exact:"' + str + '" OR ' else '') + '(label:' + str.replace(/ /g,' AND label:') + '*) OR snaks.value:"' + str + '"' + (if str.indexOf(' ') is -1 then ' OR snaks.value:' + str + '*' else '') + ' OR description:"' + str + '"'}
   else
     q.query.filtered.query.match_all = {}
   res = wikidata_record.search q
@@ -259,21 +253,22 @@ API.service.academic.funder.suggest = (str, from, size=100) ->
 
 API.service.academic.journal = {}
 API.service.academic.journal.suggest = (str, from, size=100) ->
-  q = {query: {filtered: {query: {query_string: {query: 'issn:* AND NOT dois:0'}}, filter: {bool: {should: []}}}}, size: size, _source: {includes: ['title','issn','publisher','src']}}
+  q = {query: {filtered: {query: {query_string: {query: 'issn:* AND NOT discontinued:true AND NOT dois:0'}}, filter: {bool: {should: []}}}}, size: size, _source: {includes: ['title','issn','publisher','src']}}
   q.from = from if from?
   if str
     if str.indexOf(' ') is -1
       if str.indexOf('-') isnt -1 and str.length is 9
-        q.query.filtered.query.query_string.query = 'issn.exact:"' + str + '"'
+        q.query.filtered.query.query_string.query = 'issn.exact:"' + str + '" AND NOT discontinued:true AND NOT dois:0'
       else
+        q.query.filtered.query.query_string.query = 'NOT discontinued:true AND NOT dois:0 AND ('
         if str.indexOf('-') isnt -1
-          q.query.filtered.query.query_string.query = '(issn:"' + str.replace('-','" AND issn:') + '*)'
+          q.query.filtered.query.query_string.query += '(issn:"' + str.replace('-','" AND issn:') + '*)'
         else
-          q.query.filtered.query.query_string.query = 'issn:' + str + '*'
-        q.query.filtered.query.query_string.query += ' OR title:"' + str + '" OR title:' + str + '* OR title:' + str + '~'
+          q.query.filtered.query.query_string.query += 'issn:' + str + '*'
+        q.query.filtered.query.query_string.query += ' OR title:"' + str + '" OR title:' + str + '* OR title:' + str + '~)'
     else
       str = API.service.academic._clean str
-      q.query.filtered.query.query_string.query = 'issn:* AND NOT dois:0 AND (title:"' + str + '" OR '
+      q.query.filtered.query.query_string.query = 'issn:* AND NOT discontinued:true AND NOT dois:0 AND (title:"' + str + '" OR '
       q.query.filtered.query.query_string.query += (if str.indexOf(' ') is -1 then 'title:' + str + '*' else '(title:' + str.replace(/ /g,'~ AND title:') + '*)') + ')'
   res = academic_journal.search q
   starts = []
@@ -355,12 +350,9 @@ API.service.academic.journal.load_oa = (refresh, issn_or_rec, doi) ->
 
 
 
-API.service.academic.journal.load = (sources) ->
-  if sources
-    sources = sources.split(',') if typeof sources is 'string'
-  else
-    # if no sources specified, dump everything and load fresh
-    academic_journal.remove '*' # could make this a bulk delete earlier than createdAt now
+API.service.academic.journal.load = (sources=['doaj', 'crossref', 'wikidata']) ->
+  sources = sources.split(',') if typeof sources is 'string'
+  academic_journal.remove '*' # could make this a bulk delete earlier than createdAt now
 
   processed = 0
   saved = 0
@@ -369,15 +361,15 @@ API.service.academic.journal.load = (sources) ->
 
   _load = (rec={}) ->
     processed += 1
-    console.log processed, saved, batch.length, loadedissns.length
-    if batch.length >= 10000
+    if batch.length >= 5000
+      console.log processed, saved, batch.length, loadedissns.length
       academic_journal.insert batch
       batch = []
 
     journal = {}
 
     # example crossref record https://dev.api.cottagelabs.com/use/crossref/journals/0965-2302
-    if rec?.ISSN? and rec.ISSN.length # crossref uses capitalised journal ISSN list
+    if rec.ISSN? and rec.ISSN.length # crossref uses capitalised journal ISSN list (which is correct, ISSNs should be uppercase)
       journal.title = rec.title
       journal.publisher = rec.publisher
       journal.subject = rec.subjects # objects with name and ASJC code
@@ -389,11 +381,36 @@ API.service.academic.journal.load = (sources) ->
         for yr in rec.breakdowns['dois-by-issued-year']
           journal.years.push(yr[0]) if yr.length is 2 and yr[0] not in journal.years
         journal.years.sort()
-      journal.issn = [journal.issn] if typeof journal.issn is 'string'
-      journal.src = ['crossref']
-      try rec = wikidata_record.find '(snaks.value.exact:"' + journal.issn.join('" OR snaks.value.exact:"') + '") AND snaks.key.exact:"ISSN" AND snaks.key.exact:"instance of" AND snaks.qid.exact:"Q5633421"'
+      if not journal.years? or not journal.years.length
+        journal.discontinued = true
+      else
+        # this was derived from the spec for JCT - if no publication in the last 3 years, assume it discontinued
+        thisyear = new Date().getFullYear()
+        if thisyear not in journal.years and (thisyear-1) not in journal.years and (thisyear-2) not in journal.years
+          journal.discontinued = true
+      journal.src ?= []
+      journal.src.push 'crossref'
 
-    if rec?.snaks
+    if rec.bibjson?
+      journal.src ?= []
+      journal.src.push 'doaj'
+      journal.is_oa = true
+      journal.doaj_admin = rec.admin if rec.admin?
+      journal.title ?= rec.bibjson.title
+      journal.publisher ?= rec.bibjson.publisher.name if rec.bibjson.publisher?.name?
+      journal.keyword ?= rec.bibjson.keywords
+      if rec.bibjson.subject? and rec.bibjson.subject.length
+        journal.subject ?= []
+        for jsn in rec.bibjson.subject
+          jsn.name ?= jsn.term # doaj has the subject "name" in the "term" key
+          journal.subject.push jsn
+      journal.issn ?= []
+      journal.discontinued = true if rec.bibjson.discontinued_date
+      journal.issn.push(rec.bibjson.pissn.toUpperCase()) if rec.bibjson.pissn? and rec.bibjson.pissn.toUpperCase() not in journal.issn
+      journal.issn.push(rec.bibjson.eissn.toUpperCase()) if rec.bibjson.eissn? and rec.bibjson.eissn.toUpperCase() not in journal.issn
+      try journal.licence = rec.bibjson.license[0].title.toLowerCase().replace(/ /g, '-')
+
+    if rec.snaks
       for snak in rec.snaks
         if snak.property is 'P921'
           journal.subject ?= []
@@ -402,12 +419,13 @@ API.service.academic.journal.load = (sources) ->
           else
             sb = wikidata_record.get snak.qid # remove this if too slow
             journal.subject.push({name: sb.label}) if sb?.label?
-        if snak.key is 'ISSN' and not journal.issn 
+        if snak.key.indexOf('ISSN') is 0
           # don't trust wikidata ISSNs if we already have crossref ones. but note this means we will miss some matches where crossref is wrong and not wikidata
           # here is one where crossref is wrong and we could get the right one from wikidata: https://dev.api.cottagelabs.com/use/crossref/journals?q="1474-9728"
           # crossref wrongly has the incorrect ISSN and one other, wheras wikidata has the two correct ones
           # but then wikidata can be wrong and get us more wrong stuff, like: https://dev.lvatn.com/use/wikidata?q="1684-1182"
           # it has the wrong ISSN 0253-2662. The proper alternative is 1995-9133
+          # now we only load from wikidata if not already found in crossref.
           journal.issn ?= []
           snv = snak.value.toUpperCase().trim()
           journal.issn.push(snv) if snv not in journal.issn
@@ -420,67 +438,23 @@ API.service.academic.journal.load = (sources) ->
           try journal.licence ?= wikidata_record.get(snak.qid).label
       journal.src ?= []
       journal.src.push 'wikidata'
-      journal.title = rec.label
+      journal.title ?= rec.label
       journal.wikidata = rec.id
 
-    if not rec?.bibjson? and journal.issn? and journal.issn.length
-      rec = doaj_journal.find 'bibjson.pissn.exact:"' + journal.issn.join('" OR bibjson.pissn.exact:"') + '" OR bibjson.eissn.exact:"' + journal.issn.join('" OR bibjson.eissn.exact:"') + '"'
-    if rec?.bibjson?
-      journal.src ?= []
-      journal.src.push 'doaj'
-      journal.is_oa = true
-      journal.doaj_admin = rec.admin if rec.admin?
-      journal.title ?= rec.bibjson.title
-      journal.publisher ?= rec.bibjson.publisher
-      journal.keyword ?= rec.bibjson.keywords
-      if rec.bibjson.subject? and rec.bibjson.subject.length
-        journal.subject ?= []
-        for jsn in rec.bibjson.subject
-          jsn.name ?= jsn.term # doaj has the subject "name" in the "term" key
-          journal.subject.push jsn
-      journal.issn ?= []
-      journal.issn.push(rec.bibjson.pissn) if rec.bibjson.pissn? and rec.bibjson.pissn not in journal.issn
-      journal.issn.push(rec.bibjson.eissn) if rec.bibjson.eissn? and rec.bibjson.eissn not in journal.issn
-      try journal.licence = rec.bibjson.license[0].title.toLowerCase().replace(/ /g, '-')
-    
     if journal.issn? and journal.issn.length
-      saved += 1
+      loadable = true
       for issn in journal.issn
-        loadedissns.push(issn) if issn not in loadedissns
-      batch.push journal
+        if issn not in loadedissns
+          loadedissns.push issn
+        else
+          loadable = false
+      if loadable
+        saved += 1
+        batch.push journal
 
-  # start with everything in crossref
-  if not sources or 'crossref' in sources
-    crossref_journal.each '*', (rec) ->
-      _load(rec) if not sources or ('crossref' in sources and not academic_journal.find 'issn.exact:"' + rec.ISSN.join('" OR issn.exact:"') + '"')
-
-  if not sources or 'wikidata' in sources
-    console.log 'academic journal import trying remainders in wikidata'
-    wikidata_record.each 'snaks.key.exact:"ISSN" AND snaks.key.exact:"instance of" AND snaks.qid.exact:"Q5633421"', (rec) ->
-      loadable = true
-      issns = []
-      for snak in rec.snaks
-        if snak.key.indexOf('ISSN') is 0 # could be ISSN-L for example
-          svn = snak.value.toUpperCase().trim()
-          issns.push svn
-          if svn in loadedissns
-            loadable = false
-            break
-      _load(rec) if loadable and (not sources or ('wikidata' in sources and not academic_journal.find 'issn.exact:"' + issns.join('" OR issn.exact:"') + '"'))
-
-  if not sources or 'doaj' in sources
-    console.log 'academic journal import trying remainders in doaj'
-    doaj_journal.each '*', (rec) ->
-      loadable = true
-      issns = []
-      for i in rec.bibjson?.identifier ? []
-        if typeof i.id is 'string' and i.type.indexOf('issn') isnt -1
-          isn = i.id.toUpperCase().trim()
-          issns.push isn
-          if isn in loadedissns
-            loadable = false
-            break
-      _load(rec) if loadable and (not sources or ('doaj' in sources and not academic_journal.find 'issn.exact:"' + issns.join('" OR issn.exact:"') + '"'))
+  doaj_journal.each(_load) if 'doaj' in sources
+  crossref_journal.each(_load) if 'crossref' in sources
+  wikidata_record.each('snaks.key.exact:"ISSN" AND snaks.key.exact:"instance of" AND snaks.qid.exact:"Q5633421"', _load) if 'wikidata' in sources
 
   academic_journal.insert(batch) if batch.length
 
@@ -492,25 +466,13 @@ API.service.academic.journal.load = (sources) ->
 
   return saved
 
-API.service.academic.journal.load.examples = () ->
-  started = Date.now()
-  tried = 0
-  found = 0
-  academic_journal.each 'NOT doi:*', (rec) ->
-    console.log tried, found, (Date.now() - started)
-    tried += 1
-    rec.doi = API.use.crossref.journals.doi rec.issn
-    if rec.doi?
-      academic_journal.update rec._id, doi: rec.doi
-      found += 1
-  API.log 'finished looking for crossref journal DOI examples, took ' + (Date.now() - started)
-  return found
-
-_load_examples = () -> # remove this once we are closer to having them all, or have a full crossref index
+# run every day on main machine
+_load_journals = () ->
   if API.settings.cluster?.ip? and API.status.ip() not in API.settings.cluster.ip
-    API.service.academic.journal.load.examples()
-#Meteor.setTimeout _load_examples, 6000
-
+    Meteor.setInterval (() ->
+      API.service.academic.journal.load()
+      ), 43200000
+#Meteor.setTimeout _load_journals, 6000
 
 API.service.academic.publisher = {}
 API.service.academic.publisher.load_oa = (refresh) ->

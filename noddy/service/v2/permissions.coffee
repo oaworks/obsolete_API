@@ -190,10 +190,9 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
     psm = JSON.parse JSON.stringify meta
     delete psm.ror
     if not _.isEmpty psm
-      rsm = API.service.oab.metadata {metadata: ['crossref_type','issn','publisher','published','year','author']}, psm
+      rsm = API.service.oab.metadata {metadata: ['crossref_type','issn','publisher','published','year','author','ror']}, psm
       for mk of rsm
-        if mk not in ['ror']
-          meta[mk] ?= rsm[mk]
+        meta[mk] ?= rsm[mk]
   _getmeta() if getmeta isnt false and meta.doi and (not meta.publisher or not meta.issn)
   meta.published = meta.year + '-01-01' if not meta.published and meta.year
   haddoi = meta.doi?
@@ -437,7 +436,7 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
 
 
 # https://docs.google.com/spreadsheets/d/1qBb0RV1XgO3xOQMdHJBAf3HCJlUgsXqDVauWAtxde4A/edit
-API.service.oab.permission.import = (reload=false, src, stale=3600000) ->
+API.service.oab.permission.import = (reload=false, src, stale=1000) ->
   # unfortunately for now there appears to be no way to uniquely identify a record
   # so if ANY show last updated in the last day, reload them all
   reload = true
@@ -603,8 +602,8 @@ API.service.oab.permission.import = (reload=false, src, stale=3600000) ->
   API.mail.send
     service: 'openaccessbutton'
     from: 'natalia.norori@openaccessbutton.org'
-    to: 'mark@cottagelabs.com'
-    subject: 'OAB permissions import check complete'
+    to: ['mark@cottagelabs.com','joe@openaccessbutton.org']
+    subject: 'OAB permissions import check complete' + if API.settings.dev then ' (dev)' else ''
     text: 'Found ' + records.length + ' in sheet, imported ' + ready.length + ' records'
   return ready.length
 

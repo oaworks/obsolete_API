@@ -340,7 +340,7 @@ API.add 'service/oab/job/:jid/results.csv',
         csv += '"'
 
     job = job_job.get this.urlParams.jid
-    name = if job.name then job.name.split('.')[0].replace(/ /g,'_') + '_results' else 'results'
+    name = if job?.name then job?.name.split('.')[0].replace(/ /g,'_') + '_results' else 'results'
     this.response.writeHead 200,
       'Content-disposition': "attachment; filename="+name+".csv"
       'Content-type': 'text/csv; charset=UTF-8'

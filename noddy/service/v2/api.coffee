@@ -268,7 +268,7 @@ API.service.oab.stats = (tool) ->
           tk = em.key.split('?')[0].split('#')[0]
           res.embedoa[u.key].embeds.push(tk) if tk not in res.embedoa[u.key].embeds
 
-  if not tool? # ills
+  if not tool? # ills and shareyourpapers
     iggs = {users: {terms: {field: "from.exact", size: 10000}}}
     iggs.users.aggs = {firsts: {terms: {field:"created_date", size: 1, order: {_term: "asc"}}}}
     iggs.users.aggs.oa = {filter: {bool: {must: [{exists: {field: "url"}}]}}, aggs: {from: {terms: {field: "from.exact"}}}}
@@ -299,6 +299,37 @@ API.service.oab.stats = (tool) ->
     try res.ill[u.key].withissn = u.doc_count for u in ills.aggregations.issn.users.buckets
     try res.ill[u.key].forwarded = u.doc_count for u in ills.aggregations.forwarded.users.buckets
 
+    sggs = {users: {terms: {field: "from.exact", size: 10000}}}
+    sggs.users.aggs = {firsts: {terms: {field:"created_date", size: 1, order: {_term: "asc"}}}}
+    sggs.users.aggs.embeds = {terms: {field: "embedded.exact", size: 100}}
+    sypfinds = oab_find.search {plugin: 'shareyourpaper'}, {size: 0, aggs: sggs}
+    res.syp = {}
+    try
+      for u in sypfinds.aggregations.users.buckets
+        res.syp[u.key] = count: u.doc_count
+        try res.syp[u.key].first = u.firsts.buckets[0].key_as_string.split(' ')[0].split('-').reverse().join('/')
+        res.syp[u.key].embeds = []
+        for em in u.embeds.buckets
+          tk = em.key.split('?')[0].split('#')[0]
+          res.syp[u.key].embeds.push(tk) if tk not in res.syp[u.key].embeds
+        res.syp[u.key].review ?= 0
+        res.syp[u.key].zenodo ?= 0
+        res.syp[u.key].redeposit ?= 0
+        res.syp[u.key].forward ?= 0
+        res.syp[u.key].dark ?= 0
+    oab_catalogue.each 'deposit.from.exact:* AND deposit.type.exact:*', (rec) ->
+      for d in rec.deposit
+        res.syp[d.from] ?= {}
+        #if not res.syp[d.from].firstAt or res.syp[d.from].firstAt < d.createdAt
+        #  res.syp[d.from].firstAt = d.createdAt
+        #  res.syp[d.from].first = d.created_date.split(' ')[0].split('-').reverse().join('/')
+        res.syp[d.from].review ?= 0
+        res.syp[d.from].zenodo ?= 0
+        res.syp[d.from].redeposit ?= 0
+        res.syp[d.from].forward ?= 0
+        res.syp[d.from].dark ?= 0
+        res.syp[d.from][d.type] ?= 0
+        res.syp[d.from][d.type] += 1
   return res
 
 API.service.oab.blacklist = (url,stale=360000) ->

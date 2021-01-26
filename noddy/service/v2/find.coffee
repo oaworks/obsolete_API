@@ -295,7 +295,8 @@ API.service.oab.find = (options={}, metadata={}, content) ->
 
   options.permissions ?= options.plugin is 'shareyourpaper' # don't get permissions by default now that the permissions check could take longer
   options.ill ?= (options.from? or options.config?) and options.plugin is 'instantill' # get ILL info too if necessary
-  options.bing = API.settings?.service?.openaccessbutton?.resolve?.bing isnt false and API.settings?.service?.openaccessbutton?.resolve?.bing?.use isnt false
+  options.bing ?= API.settings?.service?.openaccessbutton?.resolve?.bing is true
+  options.bing = false if API.settings?.service?.openaccessbutton?.resolve?.bing is false
   # switch exlibris URLs for titles, which the scraper knows how to extract, because the exlibris url would always be the same
   if not metadata.title and content and typeof options.url is 'string' and (options.url.indexOf('alma.exlibrisgroup.com') isnt -1 or options.url.indexOf('/exlibristest') isnt -1)
     delete options.url
@@ -305,7 +306,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
   res.from = options.from if options.from?
   res.find = options.find ? true
   # other possible sources are ['base','dissemin','share','core','openaire','bing','fighsare']
-  res.sources = options.sources ? ['oabutton','catalogue','oadoi','crossref','epmc','scrape']
+  res.sources = options.sources ? ['oabutton','catalogue','oadoi','crossref','mag','epmc','scrape']
   res.sources.push('bing') if options.bing and options.plugin is 'instantill' # (options.plugin in ['widget','oasheet','instantill'] or options.from in ['illiad','clio'] or res.exlibris)
   options.refresh = if options.refresh is 'true' or options.refresh is true then true else if options.refresh is 'false' or options.refesh is false then false else options.refresh
   try res.refresh = if options.refresh is false then 30 else if options.refresh is true then 0 else parseInt options.refresh
@@ -358,6 +359,8 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       # decided to disable using cached permissions, calculating them is fast now anyway. To re-enable, would have to take account of RORs etc
       #res.permissions ?= catalogued.permissions if catalogued.permissions?.best_permission? and not _.isEmpty(catalogued.permissions.best_permission) and (catalogued.metadata?.journal? or catalogued.metadata?.issn?)
       if 'oabutton' in res.sources
+        delete catalogued.metadata.issn if typeof catalogued.metadata?.issn is 'string'
+        delete catalogued.metadata.ror if catalogued.metadata?.ror? # because of old wrong RORs
         if catalogued.url? # within or without refresh time, if we have already found it, re-use it
           _get.metadata catalogued.metadata
           res.cached = true
@@ -369,39 +372,70 @@ API.service.oab.find = (options={}, metadata={}, content) ->
           res.cached = true
 
   _get.catalogue = () ->
-    inc = API.service.academic.article.doi metadata.doi
-    _get.metadata(inc) if inc?
+    if inc = API.service.academic.article.doi metadata.doi
+      delete inc.ror # because of old wrong RORs
+      _get.metadata inc
     
+  _get.mag = () ->
+    mgr = false
+    if metadata.doi
+      try mgr = API.use.microsoft.graph.paper.doi metadata.doi
+    if typeof mgr isnt 'object' and metadata.title
+      try mgr = API.use.microsoft.graph.paper.title metadata.title
+    if typeof mgr is 'object'
+      metadata.doi ?= mgr.Doi if mgr.Doi
+      metadata.title ?= mgr.PaperTitle if mgr.PaperTitle
+      metadata.year ?= mgr.Year if mgr.Year
+      metadata.publisher ?= mgr.Publisher if mgr.Publisher
+      metadata.volume ?= mgr.Volume if mgr.Volume
+      metadata.issue ?= mgr.Issue if mgr.Issue
+      if mgr.FirstPage or mgr.LastPage and not metadata.pages
+        metadata.pages = mgr.FirstPage ? ''
+        if mgr.LastPage
+          metadata.pages += (if metadata.pages.length then ' - ' else '') + mgr.LastPage
+      metadata.journal ?= mgr.journal.DisplayName if mgr.journal?.DisplayName
+      metadata.issn ?= mgr.journal.Issn.split(',') if mgr.journal?.Issn # I think these are always single strings, but a split makes them a list even if there is only ever one anyway.
+      metadata.published ?= mgr.Date if mgr.Date
+      metadata.abstract = mgr.abstract if mgr.abstract
+      metadata.author ?= []
+      hasauthors = metadata.author.length
+      if mgr.relation? and mgr.relation.length
+        for rl in mgr.relation
+          if rl.AuthorId
+            at = name: rl.DisplayName ? rl.OriginalAuthor
+            at.institution = rl.OriginalAffiliation if rl.OriginalAffiliation
+            at.institution ?= rl.affiliation.DisplayName if rl.affiliation?.DisplayName
+            at.ror = rl.ror if rl.ror
+            at.ror = rl.affiliation.ror if rl.affiliation?.ror
+            if not hasauthors
+              metadata.author.push at
+            if at.ror # could try merging authors with possible crossref author data for example...
+              metadata.ror ?= [] # but for now just get the rors
+              metadata.ror.push(at.ror) if at.ror not in metadata.ror
+  
   _get.bing = () ->
-    API.settings.service.openaccessbutton.resolve.bing = {max:10000,cap:'30days'} if API.settings?.service?.openaccessbutton?.resolve?.bing is true
-    cap = if API.settings?.service?.openaccessbutton?.resolve?.bing?.cap? then API.job.cap(API.settings.service.openaccessbutton?.resolve?.bing?.max ? 10000, API.settings.service.openaccessbutton?.resolve?.bing?.cap ? '30days','oabutton_bing') else undefined
-    if cap?.capped
-      res.capped = true
-    else
-      mct = unidecode(metadata.title.toLowerCase()).replace(/[^a-z0-9 ]+/g, " ").replace(/\s\s+/g, ' ')
-      bing = API.use.microsoft.bing.search mct, true, 2592000000, API.settings.use.microsoft.bing.key # search bing for what we think is a title (caching up to 30 days)
-      #res.bing = bing ? {}
-      #res.bing.cap = cap
-      if bing?.data? and bing.data.length
-        bct = unidecode(bing.data[0].name.toLowerCase()).replace('(pdf)','').replace(/[^a-z0-9 ]+/g, " ").replace(/\s\s+/g, ' ')
-        if not API.service.oab.blacklist(bing.data[0].url) and mct.replace(/ /g,'').indexOf(bct.replace(/ /g,'')) is 0 # if the URL is usable and tidy bing title is not a partial match to the start of the provided title, we won't do anything with it
-          try
-            if bing.data[0].name.indexOf('PDF') is -1 and (bing.data[0].url.toLowerCase().indexOf('.pdf') is -1 or mct.replace(/[^a-z0-9]+/g, "").indexOf(bing.data[0].url.toLowerCase().split('.pdf')[0].split('/').pop().replace(/[^a-z0-9]+/g, "")) is 0)
-              options.url = bing.data[0].url.replace(/"/g,'')
-            else
-              content = API.convert.pdf2txt(bing.data[0].url)
-              content = content.substring(0,1000) if content.length > 1000
-              content = content.toLowerCase().replace(/[^a-z0-9]/g,"").replace(/\s\s+/g, '')
-              if content.indexOf(mct.replace(/ /g, '')) isnt -1
-                options.url = bing.data[0].url.replace(/"/g,'')
-                try
-                  _get.content()
-                  done.content = true
-                res.url = options.url # is it safe to use these as open URLs?
-          catch
-            options.url = bing.data[0].url.replace(/"/g,'')
-          metadata.pmid = options.url.replace(/\/$/,'').split('/').pop() if typeof options.url is 'string' and options.url.indexOf('pubmed.ncbi') isnt -1
-          metadata.doi ?= '10.' + options.url.split('/10.')[1] if typeof options.url is 'string' and options.url.indexOf('/10.') isnt -1
+    mct = unidecode(metadata.title.toLowerCase()).replace(/[^a-z0-9 ]+/g, " ").replace(/\s\s+/g, ' ')
+    bong = API.use.microsoft.bing.search mct, true, 2592000000, API.settings.use.microsoft.bing.key # search bing for what we think is a title (caching up to 30 days)
+    if bong?.data? and bong.data.length
+      bct = unidecode(bong.data[0].name.toLowerCase()).replace('(pdf)','').replace(/[^a-z0-9 ]+/g, " ").replace(/\s\s+/g, ' ')
+      if not API.service.oab.blacklist(bong.data[0].url) and mct.replace(/ /g,'').indexOf(bct.replace(/ /g,'')) is 0 # if the URL is usable and tidy bing title is not a partial match to the start of the provided title, we won't do anything with it
+        try
+          if bong.data[0].name.indexOf('PDF') is -1 and (bong.data[0].url.toLowerCase().indexOf('.pdf') is -1 or mct.replace(/[^a-z0-9]+/g, "").indexOf(bong.data[0].url.toLowerCase().split('.pdf')[0].split('/').pop().replace(/[^a-z0-9]+/g, "")) is 0)
+            options.url = bong.data[0].url.replace(/"/g,'')
+          else
+            content = API.convert.pdf2txt(bong.data[0].url)
+            content = content.substring(0,1000) if content.length > 1000
+            content = content.toLowerCase().replace(/[^a-z0-9]/g,"").replace(/\s\s+/g, '')
+            if content.indexOf(mct.replace(/ /g, '')) isnt -1
+              options.url = bong.data[0].url.replace(/"/g,'')
+              try
+                _get.content()
+                done.content = true
+              res.url = options.url # is it safe to use these as open URLs?
+        catch
+          options.url = bong.data[0].url.replace(/"/g,'')
+        metadata.pmid = options.url.replace(/\/$/,'').split('/').pop() if typeof options.url is 'string' and options.url.indexOf('pubmed.ncbi') isnt -1
+        metadata.doi ?= '10.' + options.url.split('/10.')[1] if typeof options.url is 'string' and options.url.indexOf('/10.') isnt -1
 
   _get.content = () ->
     _get.metadata API.service.oab.scrape undefined, content 
@@ -499,7 +533,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       if metadata.doi and not done.dois
         done.dois = true
         for src in res.sources
-          _prl(src, 'doi') if src not in ['oabutton','scrape','bing']
+          _prl(src, 'doi') if src not in ['oabutton','scrape','bing','mag']
       else if (metadata.pmcid or metadata.pmid) and not done.epmcid
         done.epmcid = true
         _prl('epmc','id')
@@ -507,7 +541,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
         if typeof metadata.title is 'string' and metadata.title.length > 8 and metadata.title.split(' ').length > 2 and not done.titles
           done.titles = true
           for src in res.sources
-            _prl(src, 'title') if src not in ['oadoi','oabutton','catalogue','scrape','bing']
+            _prl(src, 'title') if src not in ['oadoi','oabutton','catalogue','scrape','bing','mag']
         else if (not metadata.pmcid and not metadata.pmid) or done.epmcid
           if not metadata.title or (done.titles and (done.bing or not options.bing or 'bing' not in res.sources))
             if not done.content and content
@@ -516,6 +550,9 @@ API.service.oab.find = (options={}, metadata={}, content) ->
             else if options.url and not done.scrape and 'scrape' in res.sources
               done.scrape = true
               _run 'scrape'
+          else if not done.mag and typeof metadata.title is 'string' and metadata.title.length > 8 and metadata.title.split(' ').length > 2 and 'mag' in res.sources
+            done.mag = true
+            _run 'mag'
           else if not done.bing and not options.url and typeof metadata.title is 'string' and metadata.title.length > 8 and metadata.title.split(' ').length > 2 and options.bing and 'bing' in res.sources
             done.bing = true
             _run 'bing'
@@ -535,6 +572,8 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       future.wait()
       _loop()
   _loop()
+  
+  _run('mag') if 'mag' in res.sources and not done.mag
   
   _get.oabutton() if not catalogued? # final check for a previous catalogue entry, with everything we know so far
 
