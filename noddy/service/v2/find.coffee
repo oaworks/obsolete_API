@@ -573,7 +573,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       _loop()
   _loop()
   
-  _run('mag') if 'mag' in res.sources and not done.mag
+  _run('mag') if 'mag' in res.sources and not done.mag and (not res.cached or not _got())
   
   _get.oabutton() if not catalogued? # final check for a previous catalogue entry, with everything we know so far
 
