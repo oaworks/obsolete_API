@@ -306,7 +306,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
   res.from = options.from if options.from?
   res.find = options.find ? true
   # other possible sources are ['base','dissemin','share','core','openaire','bing','fighsare']
-  res.sources = options.sources ? ['oabutton','catalogue','oadoi','crossref','mag','epmc','scrape']
+  res.sources = options.sources ? ['oabutton','catalogue','oadoi','crossref','epmc','scrape'] # 'mag'
   res.sources.push('bing') if options.bing and options.plugin is 'instantill' # (options.plugin in ['widget','oasheet','instantill'] or options.from in ['illiad','clio'] or res.exlibris)
   options.refresh = if options.refresh is 'true' or options.refresh is true then true else if options.refresh is 'false' or options.refesh is false then false else options.refresh
   try res.refresh = if options.refresh is false then 30 else if options.refresh is true then 0 else parseInt options.refresh
