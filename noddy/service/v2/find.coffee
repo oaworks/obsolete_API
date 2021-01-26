@@ -585,12 +585,17 @@ API.service.oab.find = (options={}, metadata={}, content) ->
   
   # update or create a catalogue record, and a find record, without waiting
   _save = (id, data, fnd) ->
+    try
+      # avoid a template clash between dev and live on find, temporary until decide what to do with find data long term
+      delete fnd.metadata.subject 
     if data? and not _.isEmpty data
+      try
+        delete data.metadata.subject 
       if id
         oab_catalogue.update id, data
       else
         fnd.catalogue = oab_catalogue.insert data
-    fndc = JSON.parse JSON.stringify fnd
+    #fndc = JSON.parse JSON.stringify fnd
     #delete fnd.permissions # don't store permissions in finds, only in catalogue - not storing them at all now
     oab_find.insert fnd
   _sv = (id, data, fnd) -> Meteor.setTimeout (() -> _save(id, data, fnd)), 1
