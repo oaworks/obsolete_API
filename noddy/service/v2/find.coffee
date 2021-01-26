@@ -537,6 +537,9 @@ API.service.oab.find = (options={}, metadata={}, content) ->
       else if (metadata.pmcid or metadata.pmid) and not done.epmcid
         done.epmcid = true
         _prl('epmc','id')
+      else if not done.mag and typeof metadata.title is 'string' and metadata.title.length > 8 and metadata.title.split(' ').length > 2 and 'mag' in res.sources
+        done.mag = true
+        _prl 'mag'
       else if _.isEmpty(_running) and not metadata.doi #or done.dois)
         if typeof metadata.title is 'string' and metadata.title.length > 8 and metadata.title.split(' ').length > 2 and not done.titles
           done.titles = true
@@ -550,10 +553,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
             else if options.url and not done.scrape and 'scrape' in res.sources
               done.scrape = true
               _run 'scrape'
-          else if not done.mag and typeof metadata.title is 'string' and metadata.title.length > 8 and metadata.title.split(' ').length > 2 and 'mag' in res.sources
-            done.mag = true
-            _run 'mag'
-          else if not done.bing and not options.url and typeof metadata.title is 'string' and metadata.title.length > 8 and metadata.title.split(' ').length > 2 and options.bing and 'bing' in res.sources
+          else if not done.bing and not options.url and (done.mag or 'mag' not in res.sources) and typeof metadata.title is 'string' and metadata.title.length > 8 and metadata.title.split(' ').length > 2 and options.bing and 'bing' in res.sources
             done.bing = true
             _run 'bing'
 
