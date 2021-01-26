@@ -543,7 +543,7 @@ API.service.oab.find = (options={}, metadata={}, content) ->
           for src in res.sources
             _prl(src, 'title') if src not in ['oadoi','oabutton','catalogue','scrape','bing','mag']
         else if (not metadata.pmcid and not metadata.pmid) or done.epmcid
-          if not metadata.title or (done.titles and (done.bing or not options.bing or 'bing' not in res.sources))
+          if not metadata.title or (done.titles and (done.mag or 'mag' not in res.sources) and (done.bing or not options.bing or 'bing' not in res.sources))
             if not done.content and content
               done.content = true
               _run 'content'
