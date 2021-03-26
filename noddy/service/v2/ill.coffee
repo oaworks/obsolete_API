@@ -1,5 +1,6 @@
 
 import crypto from 'crypto'
+import { Random } from 'meteor/random'
 
 
 
@@ -43,7 +44,8 @@ API.add 'service/oab/ill/collect/:sid',
     # example AKfycbwPq7xWoTLwnqZHv7gJAwtsHRkreJ1hMJVeeplxDG_MipdIamU6
     url = 'https://script.google.com/macros/s/' + this.urlParams.sid + '/exec?'
     for q of this.queryParams
-      url += q + '=' + this.queryParams[q] + '&'
+      url += q + '=' + decodeURIComponent(this.queryParams[q]) + '&'
+    url += 'uuid=' + Random.id()
     HTTP.call 'GET', url
     return true
 
@@ -67,7 +69,8 @@ API.add 'service/oab/ill/openurl',
         return 404
       else
         opts = API.tdm.clean opts
-        return API.service.oab.ill.openurl opts.uid ? this.userId, opts
+        config = opts.config ? API.service.oab.ill.config(opts.uid ? this.userId)
+        return (if config?.ill_form then config.ill_form + '?' else '') + API.service.oab.ill.openurl config ? opts.uid ? this.userId, opts
 
 API.add 'service/oab/ill/url', 
   get: 
@@ -115,10 +118,8 @@ API.add 'service/oab/ills',
 API.service.oab.ill = {}
 
 API.service.oab.ill.subscription = (uid, meta={}, refresh=false) ->
-  do_serialssolutions_xml = true
-  do_sfx_xml = true
   if typeof uid is 'string'
-    sig = uid + JSON.stringify(meta) + do_serialssolutions_xml + do_sfx_xml
+    sig = uid + JSON.stringify meta
     sig = crypto.createHash('md5').update(sig, 'utf8').digest('base64')
     res = API.http.cache(sig, 'oab_ill_subs', undefined, refresh) if refresh and refresh isnt true and refresh isnt 0
   if not res?
@@ -133,9 +134,8 @@ API.service.oab.ill.subscription = (uid, meta={}, refresh=false) ->
       if config.ill_redirect_params
         config.ill_added_params ?= config.ill_redirect_params
       # need to get their subscriptions link from their config - and need to know how to build the query string for it
-      openurl = API.service.oab.ill.openurl config, meta, true
+      openurl = API.service.oab.ill.openurl config, meta
       openurl = openurl.replace(config.ill_added_params.replace('?',''),'') if config.ill_added_params
-      openurl = openurl.split('?')[1] if openurl.indexOf('?') isnt -1
       if typeof config.subscription is 'string'
         config.subscription = config.subscription.split(',')
       if typeof config.subscription_type is 'string'
@@ -150,13 +150,18 @@ API.service.oab.ill.subscription = (uid, meta={}, refresh=false) ->
           subtype = config.subscription_type[s] ? 'unknown'
         sub = sub.trim()
         if sub
-          if (subtype is 'serialssolutions' or sub.indexOf('serialssolutions') isnt -1) and sub.indexOf('.xml.') is -1 and do_serialssolutions_xml is true
+          if subtype is 'serialssolutions' or sub.indexOf('serialssolutions') isnt -1 # and sub.indexOf('.xml.') is -1 
             tid = sub.split('.search')[0]
             tid = tid.split('//')[1] if tid.indexOf('//') isnt -1
             #bs = if sub.indexOf('://') isnt -1 then sub.split('://')[0] else 'http' # always use htto because https on the xml endpoint fails
             sub = 'http://' + tid + '.openurl.xml.serialssolutions.com/openurlxml?version=1.0&genre=article&'
-          else if (subtype is 'sfx' or sub.indexOf('sfx.') isnt -1) and sub.indexOf('sfx.response_type=simplexml') is -1 and do_sfx_xml is true
+          else if (subtype is 'sfx' or sub.indexOf('sfx.') isnt -1) and sub.indexOf('sfx.response_type=simplexml') is -1
             sub += (if sub.indexOf('?') is -1 then '?' else '&') + 'sfx.response_type=simplexml'
+          else if (subtype is 'exlibris' or sub.indexOf('.exlibris') isnt -1) and sub.indexOf('response_type') is -1
+            # https://github.com/OAButton/discussion/issues/1793
+            sub = 'https://trails-msu.userservices.exlibrisgroup.com/view/uresolver/01TRAILS_MSU/openurl?svc_dat=CTO&response_type=xml&sid=InstantILL&'
+            #ID=doi:10.1108%2FNFS-09-2019-0293&genre=article&atitle=Impact%20of%20processing%20and%20packaging%20on%20the%20quality%20of%20murici%20jelly%20%5BByrsonima%20crassifolia%20(L.)%20rich%5D%20during%20storage.&title=Nutrition%20&%20Food%20Science&issn=00346659&volume=50&issue=5&date=20200901&au=Da%20Cunha,%20Mariana%20Crivelari&spage=871&pages=871-883
+
           url = sub + (if sub.indexOf('?') is -1 then '?' else '&') + openurl
           url = url.split('snc.idm.oclc.org/login?url=')[1] if url.indexOf('snc.idm.oclc.org/login?url=') isnt -1
           url = url.replace('cache=true','')
@@ -198,20 +203,19 @@ API.service.oab.ill.subscription = (uid, meta={}, refresh=false) ->
           # note there is also now an sfx xml endpoint that we have found to check
           if subtype is 'sfx' or url.indexOf('sfx.') isnt -1
             res.error.push 'sfx' if error
-            if do_sfx_xml
-              if spg.indexOf('getFullTxt') isnt -1 and spg.indexOf('<target_url>') isnt -1
-                try
-                  # this will get the first target that has a getFullTxt type and has a target_url element with a value in it, or will error
-                  res.url = spg.split('getFullTxt')[1].split('</target>')[0].split('<target_url>')[1].split('</target_url>')[0].trim()
-                  res.findings.sfx = res.url
-                  if res.url?
-                    if res.url.indexOf('getitnow') is -1
-                      res.found = 'sfx'
-                      API.http.cache(sig, 'oab_ill_subs', res)
-                      return res
-                    else
-                      res.url = undefined
-                      res.findings.sfx = undefined
+            if spg.indexOf('getFullTxt') isnt -1 and spg.indexOf('<target_url>') isnt -1
+              try
+                # this will get the first target that has a getFullTxt type and has a target_url element with a value in it, or will error
+                res.url = spg.split('getFullTxt')[1].split('</target>')[0].split('<target_url>')[1].split('</target_url>')[0].trim()
+                res.findings.sfx = res.url
+                if res.url?
+                  if res.url.indexOf('getitnow') is -1
+                    res.found = 'sfx'
+                    API.http.cache(sig, 'oab_ill_subs', res)
+                    return res
+                  else
+                    res.url = undefined
+                    res.findings.sfx = undefined
             else
               if spg.indexOf('<a title="navigate to target in new window') isnt -1 and spg.split('<a title="navigate to target in new window')[1].split('">')[0].indexOf('basic1') isnt -1
                 # tried to get the next link after the click through, but was not worth putting more time into it. For now, seems like this will have to do
@@ -271,20 +275,19 @@ API.service.oab.ill.subscription = (uid, meta={}, refresh=false) ->
           # see https://journal.code4lib.org/articles/108
           else if subtype is 'serialssolutions' or url.indexOf('serialssolutions.') isnt -1
             res.error.push 'serialssolutions' if error
-            if do_serialssolutions_xml is true
-              if spg.indexOf('<ssopenurl:url type="article">') isnt -1
-                fnd = spg.split('<ssopenurl:url type="article">')[1].split('</ssopenurl:url>')[0].trim() # this gets us something that has an empty accountid param - do we need that for it to work?
-                if fnd.length
-                  res.url = fnd
-                  res.findings.serials = res.url
-                  if res.url?
-                    if res.url.indexOf('getitnow') is -1
-                      res.found = 'serials'
-                      API.http.cache(sig, 'oab_ill_subs', res)
-                      return res
-                    else
-                      res.url = undefined
-                      res.findings.serials = undefined
+            if spg.indexOf('<ssopenurl:url type="article">') isnt -1
+              fnd = spg.split('<ssopenurl:url type="article">')[1].split('</ssopenurl:url>')[0].trim() # this gets us something that has an empty accountid param - do we need that for it to work?
+              if fnd.length
+                res.url = fnd
+                res.findings.serials = res.url
+                if res.url?
+                  if res.url.indexOf('getitnow') is -1
+                    res.found = 'serials'
+                    API.http.cache(sig, 'oab_ill_subs', res)
+                    return res
+                  else
+                    res.url = undefined
+                    res.findings.serials = undefined
               # disable journal matching for now until we have time to get it more accurate - some things get journal links but are not subscribed
               #else if spg.indexOf('<ssopenurl:result format="journal">') isnt -1
               #  # we assume if there is a journal result but not a URL that it means the institution has a journal subscription but we don't have a link
@@ -488,14 +491,13 @@ API.service.oab.ill.resolver = (user, resolve, config) ->
   # this shouldn't actually be a user setting - it should be settings for a given link resolver address
   return false
   
-API.service.oab.ill.openurl = (uid, meta={}, withoutbase=false) ->
+API.service.oab.ill.openurl = (uid, meta={}) ->
   config = if typeof uid is 'object' then uid else API.service.oab.ill.config uid
   config ?= {}
   if config.ill_redirect_base_url
     config.ill_form ?= config.ill_redirect_base_url
   if config.ill_redirect_params
     config.ill_added_params ?= config.ill_redirect_params
-  return '' if withoutbase isnt true and not config.ill_form # support redirect base url for legacy config
   # add iupui / openURL defaults to config
   defaults =
     sid: 'sid'
@@ -519,8 +521,7 @@ API.service.oab.ill.openurl = (uid, meta={}, withoutbase=false) ->
   for d of defaults
     config[d] = defaults[d] if not config[d]
 
-  url = if config.ill_form then config.ill_form else ''
-  url += if url.indexOf('?') is -1 then '?' else '&'
+  url = ''
   url += config.ill_added_params.replace('?','') + '&' if config.ill_added_params
   url += config.sid + '=InstantILL&'
   for k of meta

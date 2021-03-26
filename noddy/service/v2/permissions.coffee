@@ -9,13 +9,13 @@ API.add 'service/oab/permissions',
     if this.queryParams?.q? or this.queryParams.source? or _.isEmpty this.queryParams
       return oab_permissions.search this.queryParams
     else
-      return API.service.oab.permission this.queryParams, this.queryParams.content, this.queryParams.url, this.queryParams.confirmed, this.queryParams.uid
+      return API.service.oab.permission this.queryParams, this.queryParams.content, this.queryParams.url, this.queryParams.confirmed, this.queryParams.uid, this.queryParams.meta
   post: () ->
     if not this.request.files? and typeof this.request.body is 'object' and (this.request.body.q? or this.request.body.source?)
       this.bodyParams[k] ?= this.queryParams[k] for k of this.queryParams
       return oab_permissions.search this.bodyParams
     else
-      return API.service.oab.permission this.queryParams, this.request.files ? this.request.body, undefined, this.queryParams.confirmed ? this.bodyParams?.confirmed, this.queryParams.uid
+      return API.service.oab.permission this.queryParams, this.request.files ? this.request.body, undefined, this.queryParams.confirmed ? this.bodyParams?.confirmed, this.queryParams.uid, this.queryParams.meta
 
 API.add 'service/oab/permissions/:issnorpub', 
   get: () ->
@@ -157,6 +157,7 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
   inp = {}
   if typeof meta is 'string'
     meta = if meta.indexOf('10.') is 0 then {doi: meta} else {issn: meta}
+  delete meta.meta if meta.meta? # just used to pass in a false to getmeta
   if meta.metadata? # if passed a catalogue object
     inp = meta
     meta = meta.metadata

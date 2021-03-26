@@ -61,8 +61,8 @@ API.add 'service/academic/funder/suggest/:ac', get: () -> return API.service.aca
 
 #API.add 'service/academic/institution', () -> return academic_institution.search this
 #API.add 'service/academic/institution/:jid', get: () -> return academic_institution.get this.urlParams.jid
-API.add 'service/academic/institution/suggest', get: () -> return API.service.academic.institution.suggest undefined, this.queryParams.from
-API.add 'service/academic/institution/suggest/:ac', get: () -> return API.service.academic.institution.suggest this.urlParams.ac
+API.add 'service/academic/institution/suggest', get: () -> return API.service.academic.institution.suggest undefined, this.queryParams.from, this.queryParams.size
+API.add 'service/academic/institution/suggest/:ac', get: () -> return API.service.academic.institution.suggest this.urlParams.ac, this.queryParams.from, this.queryParams.size
 
 API.add 'service/academic/publisher', () -> return academic_publisher.search this
 API.add 'service/academic/publisher/:jid', get: () -> return academic_publisher.get this.urlParams.jid
@@ -255,7 +255,7 @@ API.service.academic.journal = {}
 API.service.academic.journal.suggest = (str, from, size=100) ->
   q = {query: {filtered: {query: {query_string: {query: 'issn:* AND NOT discontinued:true AND NOT dois:0'}}, filter: {bool: {should: []}}}}, size: size, _source: {includes: ['title','issn','publisher','src']}}
   q.from = from if from?
-  if str
+  if str and str.replace(/\-/g,'').length
     if str.indexOf(' ') is -1
       if str.indexOf('-') isnt -1 and str.length is 9
         q.query.filtered.query.query_string.query = 'issn.exact:"' + str + '" AND NOT discontinued:true AND NOT dois:0'

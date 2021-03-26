@@ -296,7 +296,7 @@ API.service.oab.deposit = (d, options={}, files, uid) ->
     ed.adminlink += 'confirmed=' + ed.confirmed + '&'
   ed.adminlink += 'email=' + ed.email
   tmpl = API.mail.template dep.type + '_deposit.html'
-  sub = API.service.oab.substitute tmpl.content, ed
+  sub = API.service.oab.substitute tmpl?.content, ed
   if perms.file?.archivable isnt false # so when true or when undefined if no file is given
     ml =
       from: 'deposits@openaccessbutton.org'
