@@ -44,7 +44,7 @@ API.add 'service/oab/ill/collect/:sid',
     # example AKfycbwPq7xWoTLwnqZHv7gJAwtsHRkreJ1hMJVeeplxDG_MipdIamU6
     url = 'https://script.google.com/macros/s/' + this.urlParams.sid + '/exec?'
     for q of this.queryParams
-      url += q + '=' + decodeURIComponent(this.queryParams[q]) + '&'
+      url += q + '=' + API.tdm.clean(decodeURIComponent(this.queryParams[q])) + '&'
     url += 'uuid=' + Random.id()
     HTTP.call 'GET', url
     return true
@@ -159,14 +159,17 @@ API.service.oab.ill.subscription = (uid, meta={}, refresh=false) ->
             sub += (if sub.indexOf('?') is -1 then '?' else '&') + 'sfx.response_type=simplexml'
           else if (subtype is 'exlibris' or sub.indexOf('.exlibris') isnt -1) and sub.indexOf('response_type') is -1
             # https://github.com/OAButton/discussion/issues/1793
-            sub = 'https://trails-msu.userservices.exlibrisgroup.com/view/uresolver/01TRAILS_MSU/openurl?svc_dat=CTO&response_type=xml&sid=InstantILL&'
+            #sub = 'https://trails-msu.userservices.exlibrisgroup.com/view/uresolver/01TRAILS_MSU/openurl?svc_dat=CTO&response_type=xml&sid=InstantILL&'
+            sub = sub.split('?')[0] + '?svc_dat=CTO&response_type=xml&sid=InstantILL&'
             #ID=doi:10.1108%2FNFS-09-2019-0293&genre=article&atitle=Impact%20of%20processing%20and%20packaging%20on%20the%20quality%20of%20murici%20jelly%20%5BByrsonima%20crassifolia%20(L.)%20rich%5D%20during%20storage.&title=Nutrition%20&%20Food%20Science&issn=00346659&volume=50&issue=5&date=20200901&au=Da%20Cunha,%20Mariana%20Crivelari&spage=871&pages=871-883
 
           url = sub + (if sub.indexOf('?') is -1 then '?' else '&') + openurl
           url = url.split('snc.idm.oclc.org/login?url=')[1] if url.indexOf('snc.idm.oclc.org/login?url=') isnt -1
-          url = url.replace('cache=true','')
+          url = url.replace 'cache=true', ''
           if subtype is 'sfx' or sub.indexOf('sfx.') isnt -1 and url.indexOf('=10.') isnt -1
-            url = url.replace('=10.','=doi:10.')
+            url = url.replace '=10.', '=doi:10.'
+          if subtype is 'exlibris' or sub.indexOf('.exlibris') isnt -1 and url.indexOf('doi=10.') isnt -1
+            url = url.replace 'doi=10.', 'ID=doi:10.'
           # need to use the proxy as some subscriptions endpoints need a registered IP address, and ours is registered for some of them already
           # but having a problem passing proxy details through, so ignore for now
           # BUT AGAIN eds definitely does NOT work without puppeteer so going to have to use that again for now and figure out the proxy problem later
@@ -182,7 +185,7 @@ API.service.oab.ill.subscription = (uid, meta={}, refresh=false) ->
           res.lookups.push url
           try
             #pg = HTTP.call('GET', url, {timeout:15000, npmRequestOptions:{proxy:API.settings.proxy}}).content
-            pg = if url.indexOf('.xml.serialssolutions') isnt -1 or url.indexOf('sfx.response_type=simplexml') isnt -1 then HTTP.call('GET',url).content else API.http.puppeteer url #, undefined, API.settings.proxy
+            pg = if url.indexOf('.xml.serialssolutions') isnt -1 or url.indexOf('sfx.response_type=simplexml') isnt -1 or url.indexOf('response_type=xml') isnt -1 then HTTP.call('GET',url).content else API.http.puppeteer url #, undefined, API.settings.proxy
             spg = if pg.indexOf('<body') isnt -1 then pg.toLowerCase().split('<body')[1].split('</body')[0] else pg
             res.contents.push spg
           catch err
@@ -315,6 +318,15 @@ API.service.oab.ill.subscription = (uid, meta={}, refresh=false) ->
                         res.findings.serials = undefined
                 catch
                   res.error.push 'serialssolutions' if error
+
+          else if subtype is 'exlibris' or url.indexOf('.exlibris') isnt -1
+            res.error.push 'exlibris' if error
+            if spg.indexOf('full_text_indicator') isnt -1 and spg.split('full_text_indicator')[1].replace('">', '').indexOf('true') is 0 and spg.indexOf('resolution_url') isnt -1
+              res.url = spg.split('<resolution_url>')[1].split('</resolution_url>')[0].replace(/&amp;/g, '&')
+              res.findings.exlibris = res.url
+              res.found = 'exlibris'
+              API.http.cache(sig, 'oab_ill_subs', res)
+              return res
 
     API.http.cache(sig, 'oab_ill_subs', res) if res.uid and not _.isEmpty res.findings
   # return cached or empty result if nothing else found

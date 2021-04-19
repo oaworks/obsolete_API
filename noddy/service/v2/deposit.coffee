@@ -172,7 +172,7 @@ API.service.oab.deposit = (d, options={}, files, uid) ->
   dep.plugin = options.plugin if options.plugin
   dep.confirmed = decodeURIComponent(options.confirmed) if options.confirmed
 
-  uc = if options.config? then options.config else if dep.from? and dep.from isnt 'anonymous' then API.service.oab.deposit.config(dep.from) else false
+  uc = if options.config? then (if typeof options.config is 'string' then JSON.parse(options.config) else options.config) else if dep.from? and dep.from isnt 'anonymous' then API.service.oab.deposit.config(dep.from) else false
 
   perms = API.service.oab.permission d, files, undefined, dep.confirmed # if confirmed is true the submitter has confirmed this is the right file. If confirmed is the checksum this is a resubmit by an admin
   if perms.file?.archivable and ((dep.confirmed? and dep.confirmed is perms.file.checksum) or not dep.confirmed) #or (dep.confirmed and API.settings.dev)) # if the depositor confirms we don't deposit, we manually review - only deposit on admin confirmation (but on dev allow it)

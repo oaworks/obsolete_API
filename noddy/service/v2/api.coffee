@@ -236,10 +236,14 @@ API.service.oab.stats = (tool) ->
 
   res.plugins = {api:{all:finds.facets.plugin.missing, week:finds.facets.plugin_week.missing, month:finds.facets.plugin_month.missing, threemonth:finds.facets.plugin_threemonth.missing, june18:finds.facets.plugin_june18.missing}}
 
+  wrongpings = {}
   if not tool? # get pings
     pingcounts = {alltime:{},week:{},month:{},threemonth:{},june18:{}}
     for h in pings.search('service:openaccessbutton AND action:*', {newest: false, size: 100000}).hits.hits
       hr = h._source
+      if hr.from and hr.action.toLowerCase() is 'instantill_wrong_article'
+        wrongpings[hr.from] ?= 0
+        wrongpings[hr.from] += 1
       for nm in _.keys pingcounts
         if nm is 'alltime' or (nm is 'week' and hr.createdAt > tmwk) or (nm is 'month' and hr.createdAt > tm1) or (nm is 'threemonth' and hr.createdAt > tm3) or (nm is 'june18' and hr.createdAt > 1527811200000)
           pingcounts[nm][hr.action] = (pingcounts[nm][hr.action] ? 0) + 1
@@ -273,7 +277,7 @@ API.service.oab.stats = (tool) ->
     iggs.users.aggs = {firsts: {terms: {field:"created_date", size: 1, order: {_term: "asc"}}}}
     iggs.users.aggs.oa = {filter: {bool: {must: [{exists: {field: "url"}}]}}, aggs: {from: {terms: {field: "from.exact"}}}}
     iggs.users.aggs.subs = {filter: {query: {query_string: {query: "ill.subscription.url:*"}}}, aggs: {from: {terms: {field: "from.exact"}}}}
-    iggs.users.aggs.wrong = {filter: {term: {wrong: true}}, aggs: {from: {terms: {field: "from.exact"}}}}
+    #iggs.users.aggs.wrong = {filter: {term: {wrong: true}}, aggs: {from: {terms: {field: "from.exact"}}}}
     iggs.users.aggs.embeds = {terms: {field: "embedded.exact", size: 100}}
     illfinds = oab_find.search {plugin: 'instantill'}, {size: 0, aggs: iggs}
     res.ill = {}
@@ -283,7 +287,8 @@ API.service.oab.stats = (tool) ->
         try res.ill[u.key].first = u.firsts.buckets[0].key_as_string.split(' ')[0].split('-').reverse().join('/')
         try res.ill[u.key].oa = u.oa.doc_count
         try res.ill[u.key].subs = u.subs.doc_count
-        try res.ill[u.key].wrong = u.wrong.doc_count
+        #try res.ill[u.key].wrong = u.wrong.doc_count
+        try res.ill[u.key].wrong = wrongpings[u.key]
         res.ill[u.key].embeds = []
         for em in u.embeds.buckets
           tk = em.key.split('?')[0].split('#')[0]

@@ -1,4 +1,21 @@
 
+API.add 'service/oab/scripts/useres',
+  get: 
+    action: () ->
+      dev = if this.queryParams.live is true then false else true
+      counter = 0
+      cased = 0
+      dups = 0
+      _ck = (rec) ->
+        counter += 1
+        try
+          eml = rec.email ? rec.emails[0].address
+          cased += 1 if eml.toLowerCase() isnt eml
+          dups += 1 if Users.count(undefined, 'email:"' + eml + '" OR emails.address:"' + eml + '"', dev) > 1
+        console.log counter, cased, dups
+      Users.each '*', undefined, _ck, undefined, undefined, undefined, dev
+      return total: counter, cased: cased, duplicates: dups
+
 '''API.add 'service/oab/scripts/cleanusers',
   get: 
     #roleRequired: 'root'

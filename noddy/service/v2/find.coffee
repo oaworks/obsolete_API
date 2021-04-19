@@ -449,7 +449,6 @@ API.service.oab.find = (options={}, metadata={}, content) ->
   _get.ill = () ->
     res.ill ?= {} # terms and openurl can be done client-side by new embed but old embed can't so keep these a while longer
     try res.ill.terms = options.config?.terms ? API.service.oab.ill.terms options.from
-    try res.ill.openurl = API.service.oab.ill.openurl (options.config ? options.from), metadata
     try res.ill.subscription = API.service.oab.ill.subscription (options.config ? options.from), metadata, res.refresh
 
 
