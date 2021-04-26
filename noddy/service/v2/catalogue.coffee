@@ -186,7 +186,7 @@ API.service.academic.institution.suggest = (str, from, size=100) ->
     #{term: {'snaks.property.exact':'P5586'}}, # Times higher education world university ID
     #{term: {'snaks.property.exact':'P5584'}}, # QS world university ID
     #{term: {'snaks.qid.exact':'Q4671277'}} #instance of academic institution
-  ]}}}}, size: size, _source: {includes: ['label','snaks.property','snaks.value','snaks.qid']}}
+  ]}}}}, size: size, _source: {includes: ['label','snaks.property','snaks.value','snaks.qid','sitelinks.enwiki.title']}}
   q.from = from if from?
   if str
     str = API.service.academic._clean(str).replace(/the /gi,'')
@@ -199,6 +199,7 @@ API.service.academic.institution.suggest = (str, from, size=100) ->
   extra = []
   for rec in res?.hits?.hits ? []
     rc = {title: rec._source.label}
+    rc.alternate = rec._source.sitelinks.enwiki.title if rec._source.sitelinks?.enwiki?.title and rec._source.sitelinks.enwiki.title isnt rc.title
     for s in rec._source.snaks
       if rc.id and rc.country
         break

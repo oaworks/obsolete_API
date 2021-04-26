@@ -118,15 +118,25 @@ API.add 'service/oab/bug',
 API.add 'service/oab/history', () -> return oab_request.history this
 
 API.add 'service/oab/users',
+  csv: true
   get:
     roleRequired:'openaccessbutton.admin'
     action: () -> 
       res = Users.search this.queryParams, {restrict:[{exists:{field:'roles.openaccessbutton'}}]}
+      recs = []
       try
         for r in res.hits.hits
           if not r._source.email?
             r._source.email = r._source.emails[0].address
-      return res
+          if this.request.url.split('?')[0].endsWith '.csv'
+            rec = {}
+            for f in ['_id','createdAt','email','profile.name','profile.firstname','profile.lastname','service.openaccessbutton.profile.affiliation','service.openaccessbutton.profile.profession','roles.openaccessbutton','username']
+              rec[f] = API.collection.dot r._source, f
+            recs.push rec
+      if recs.length
+        return recs
+      else
+        return res
   post:
     roleRequired:'openaccessbutton.admin'
     action: () -> 
