@@ -84,7 +84,7 @@ API.add 'service/oab/export/:what',
       else if this.urlParams.what is 'request'
         fields = ['_id','created_date','type','count','status','title','url','doi','journal','issn','publisher','published','sherpa.color','name','names','email','author_affiliation','user.username','user.email','user.firstname','user.lastname','user.profession','user.affiliation','story','rating','receiver','followup.count','followup.date','refused.email','refused.date','received.date','received.from','received.description','received.url','received.admin','received.cron','received.notfromauthor','notes','plugin','from','embedded','access_right','embargo_date','access_conditions','license']
       else if this.urlParams.what is 'account'
-        fields = ['_id','createdAt','emails.0.address','profile.name','profile.firstname','profile.lastname','service.openaccessbutton.profile.affiliation','service.openaccessbutton.profile.profession','roles.openaccessbutton','username']
+        fields = ['_id','createdAt','created_date','updatedAt','updated_date','emails.0.address','profile.name','profile.firstname','profile.lastname','service.openaccessbutton.profile.affiliation','service.openaccessbutton.profile.profession','roles.openaccessbutton','username']
       match = {}
       match.range = {createdAt: {}} if this.queryParams.from or this.queryParams.to
       match.range.createdAt.gte = this.queryParams.from if this.queryParams.from
