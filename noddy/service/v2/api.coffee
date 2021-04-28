@@ -130,7 +130,7 @@ API.add 'service/oab/users',
             r._source.email = r._source.emails[0].address
           if this.request.url.split('?')[0].endsWith '.csv'
             rec = {}
-            for f in ['_id','createdAt','email','profile.name','profile.firstname','profile.lastname','service.openaccessbutton.profile.affiliation','service.openaccessbutton.profile.profession','roles.openaccessbutton','username']
+            for f in ['_id','createdAt','created_date','updatedAt','updated_date','email','profile.name','profile.firstname','profile.lastname','service.openaccessbutton.profile.affiliation','service.openaccessbutton.profile.profession','roles.openaccessbutton','username']
               rec[f] = API.collection.dot r._source, f
             recs.push rec
       if recs.length
