@@ -404,14 +404,20 @@ API.service.oab.template = (template,refresh) ->
 # run a template refresh on every restart
 Meteor.setTimeout (() -> API.service.oab.template(undefined, true) if API.status.ip() not in (API.settings.cluster.ip ? [])), 40000
 
-API.service.oab.validate = (email, domain, verify=true) ->
+API.service.oab.validate = (email, domain, verify=false) ->
   bad = ['eric@talkwithcustomer.com']
   if typeof email isnt 'string' or email.indexOf(',') isnt -1 or email in bad
     return false
   else if email.indexOf('@openaccessbutton.org') isnt -1 or email.indexOf('@email.ghostinspector.com') isnt -1 #or email in []
     return true
   else
-    v = API.mail.validate email, API.settings.service.openaccessbutton.mail.pubkey
+    #v = API.mail.validate email, API.settings.service.openaccessbutton.mail.pubkey
+    # not using mailgun verification any more, just do the direct simple check of the email
+    v = {}
+    if typeof email is 'string' and email.length and email.indexOf(' ') is -1
+      [n, d] = email.split '@'
+      if n.length and d.length and d.split('.').length > 1
+        v = is_valid: true
     if v.is_valid and (not verify or v.mailbox_verification in [true,'true'])
       if false #domain and domain not in ['qZooaHWRz9NLFNcgR','eZwJ83xp3oZDaec86'] # turning this off for now
         iacc = API.accounts.retrieve domain
