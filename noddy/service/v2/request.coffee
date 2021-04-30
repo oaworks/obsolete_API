@@ -275,8 +275,8 @@ API.service.oab.request = (req,uacc,fast,notify=true) ->
             req.email = email.email
             break
 
-  if (req.journal or req.issn) and not req.sherpa? # doing this even on fast cos we may be able to close immediately. If users say too slow now, disable this on fast again
-    try req.sherpa = API.use.sherpa.romeo.find(if req.issn then {issn:req.issn} else {title:req.journal})
+  #if (req.journal or req.issn) and not req.sherpa? # doing this even on fast cos we may be able to close immediately. If users say too slow now, disable this on fast again
+  #  try req.sherpa = API.use.sherpa.romeo.find(if req.issn then {issn:req.issn} else {title:req.journal})
 
   if req.story
     res = oab_request.search 'rating:1 AND story.exact:"' + req.story + '"'
@@ -305,10 +305,10 @@ API.service.oab.request = (req,uacc,fast,notify=true) ->
     req.status = 'closed'
     req.closed_on_create = true
     req.closed_on_create_reason = 'notarticle'
-  if req.sherpa?.color? and typeof req.sherpa.color is 'string' and req.sherpa.color.toLowerCase() is 'white' and req.status isnt 'closed'
-    req.status = 'closed'
-    req.closed_on_create = true
-    req.closed_on_create_reason = 'sherpawhite'
+  #if req.sherpa?.color? and typeof req.sherpa.color is 'string' and req.sherpa.color.toLowerCase() is 'white' and req.status isnt 'closed'
+  #  req.status = 'closed'
+  #  req.closed_on_create = true
+  #  req.closed_on_create_reason = 'sherpawhite'
 
   if req.location?.geo
     req.location.geo.lat = Math.round(req.location.geo.lat*1000)/1000 if req.location.geo.lat

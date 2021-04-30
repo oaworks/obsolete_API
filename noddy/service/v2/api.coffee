@@ -383,9 +383,10 @@ API.service.oab.template = (template,refresh) ->
   if refresh or mail_template.count(undefined,{service:'openaccessbutton'}) is 0
     mail_template.remove {service:'openaccessbutton'}
     ghurl = API.settings.service.openaccessbutton?.templates_url
+    ghp = ghurl.split('.com/')[1].split('/tree')[0]
     m = API.tdm.extract
       url:ghurl
-      matchers:['/href="/OAButton/website/blob/develop/emails/(.*?[.].*?)">/gi']
+      matchers:['/href="/' + ghp + '/blob/' + (if API.settings.dev then 'develop' else 'master') + '/emails/(.*?[.].*?)">/gi']
       start:'<table class="files'
       end:'</table'
     fls = []
