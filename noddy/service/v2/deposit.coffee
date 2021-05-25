@@ -149,8 +149,8 @@ API.service.oab.deposit = (d, options={}, files, uid) ->
     d = oab_catalogue.get d
   else
     d = oab_catalogue.finder options.metadata ? options
-    if not d? and options.metadata?
-      fnd = API.service.oab.find options.metadata # this will create a catalogue record out of whatever is provided, and also checks to see if thing is available already
+    if not d?
+      fnd = API.service.oab.find options.metadata ? options
       d = oab_catalogue.get fnd.catalogue
   return 400 if not d?
 

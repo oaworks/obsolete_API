@@ -378,7 +378,7 @@ API.service.oab.permission = (meta={}, file, url, confirmed, roruid, getmeta) ->
             if not ro.provenance?.enforcement_from or not meta.published or moment(meta.published,'YYYY-MM-DD').isAfter(moment(ro.provenance.enforcement_from,'DD/MM/YYYY'))
               pb = JSON.parse JSON.stringify perms.best_permission
               for key in ['licences', 'versions', 'locations']
-                for vl in ro[key]
+                for vl in (ro[key] ? [])
                   pb[key] ?= []
                   pb[key].push(vl) if vl not in pb[key]
               for l in pb.licences ? []
@@ -698,7 +698,7 @@ API.service.oab.permission.file = (file, url, confirmed, meta={}) ->
 
     f.same_paper = if f.same_paper_evidence.words_more_than_threshold and (f.same_paper_evidence.doi_match or f.same_paper_evidence.title_match or f.same_paper_evidence.author_match) and f.same_paper_evidence.document_format then true else false
 
-    if f.same_paper_evidence.words_count is 1 and f.format is 'pdf'
+    if f.same_paper_evidence.words_count < 150 and f.format is 'pdf'
       # there was likely a pdf file reading failure due to bad PDF formatting
       f.same_paper_evidence.words_count = 0
       f.archivable_reason = 'We could not find any text in the provided PDF. It is possible the PDF is a scan in which case text is only contained within images which we do not yet extract. Or, the PDF may have errors in it\'s structure which stops us being able to machine-read it'
