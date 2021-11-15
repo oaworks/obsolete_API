@@ -602,7 +602,7 @@ API.service.oab.permission.import = (reload=false, src, stale=1000) ->
       oab_permissions.insert ready
   API.mail.send
     service: 'openaccessbutton'
-    from: 'natalia.norori@openaccessbutton.org'
+    from: 'notify@openaccessbutton.org'
     to: ['mark@cottagelabs.com','joe@openaccessbutton.org']
     subject: 'OAB permissions import check complete' + if API.settings.dev then ' (dev)' else ''
     text: 'Found ' + records.length + ' in sheet, imported ' + ready.length + ' records'
@@ -803,7 +803,7 @@ API.service.oab.permission.test = (email) ->
 
   API.mail.send
     service: 'openaccessbutton'
-    from: 'natalia.norori@openaccessbutton.org'
+    from: 'notify@openaccessbutton.org'
     to: email ? 'alert@cottagelabs.com'
     subject: 'OAB permissions test complete'
     text: JSON.stringify res, '', 2
