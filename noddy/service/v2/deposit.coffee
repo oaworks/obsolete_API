@@ -264,7 +264,7 @@ API.service.oab.deposit = (d, options={}, files, uid) ->
   dd = {deposit: d.deposit, permissions: perms}
   oab_catalogue.update d._id, dd
 
-  bcc = API.settings.service.openaccessbutton.notify.deposit ? ['joe@righttoresearch.org','natalia.norori@openaccessbutton.org']
+  bcc = API.settings.service.openaccessbutton.notify.deposit ? ['joe@righttoresearch.org','shared@openaccessbutton.org']
   #bcc = []
   #if dep.type isnt 'review'
   #  bcc = tos
