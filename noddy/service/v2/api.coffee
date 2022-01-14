@@ -143,9 +143,39 @@ API.add 'service/oab/users',
       res = Users.search this.bodyParams, {restrict:[{exists:{field:'roles.openaccessbutton'}}]}
       try
         for r in res.hits.hits
-          if not res.hits.hits[r]._source.email?
-            res.hits.hits[r]._source.email = res.hits.hits[r]._source.emails[0].address
+          if not r._source.email?
+            r._source.email = r._source.emails[0].address
       return res
+
+API.add 'service/oab/users/:email',
+  get:
+    roleRequired:'openaccessbutton.admin'
+    action: () ->
+      if not this.urlParams.email.includes '@'
+        rec = Users.get this.urlParams.email
+        if rec?._id is this.urlParams.email
+          if this.queryParams.delete is true
+            Users.remove rec._id
+            return true
+          else
+            return rec
+        else
+          return
+      else
+        res = Users.search 'email:"' + this.urlParams.email + '" OR emails.address:"' + this.urlParams.email + '"', {restrict:[{exists:{field:'roles.openaccessbutton'}}]}
+        if res?.hits?.total > 0
+          if this.queryParams.delete is true
+            if res.hits.total < 5
+              for r in res.hits.hits
+                if r._source?._id and (r._source.email.toLowerCase() is this.urlParams.email.toLowerCase() or JSON.stringify(r._source.emails ? {}).includes this.urlParams.email.toLowerCase())
+                  Users.remove r._source._id
+            else if res.hits.hits[0]._source?._id
+              Users.remove res.hits.hits[0]._source._id
+            return true
+          else
+            return res.hits.hits[0]._source
+        else
+          return
 
 API.add 'service/oab/redirect', get: () -> return API.service.oab.redirect this.queryParams.url, this.queryParams.refresh?
 

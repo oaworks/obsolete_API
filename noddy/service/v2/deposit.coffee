@@ -209,11 +209,11 @@ API.service.oab.deposit = (d, options={}, files, uid) ->
       in_zenodo = API.use.zenodo.records.doi d.metadata.doi
       if in_zenodo and dep.confirmed isnt perms.file.checksum and not API.settings.dev
         dep.zenodo.already = in_zenodo.id # we don't put it in again although we could with doi as related field - but leave for review for now
-      else if in_zenodo
+      else if API.settings.service.openaccessbutton?.zenodo?.prereserve_doi
         meta['related_identifiers'] = [{relation: (if meta.version is 'postprint' or meta.version is 'AAM' or meta.version is 'preprint' then 'isPreviousVersionOf' else 'isIdenticalTo'), identifier: d.metadata.doi}]
       else
         meta.doi = d.metadata.doi
-    else if API.settings.service.openaccessbutton?.zenodo?.prereserve_doi
+    if API.settings.service.openaccessbutton?.zenodo?.prereserve_doi
       meta.prereserve_doi = true
     meta['access_right'] = 'open'
     meta.license = perms.best_permission?.licence ? 'cc-by' # zenodo also accepts other-closed and other-nc, possibly more
@@ -264,11 +264,7 @@ API.service.oab.deposit = (d, options={}, files, uid) ->
   dd = {deposit: d.deposit, permissions: perms}
   oab_catalogue.update d._id, dd
 
-  bcc = API.settings.service.openaccessbutton.notify.deposit ? ['joe@righttoresearch.org','natalia.norori@openaccessbutton.org']
-  #bcc = []
-  #if dep.type isnt 'review'
-  #  bcc = tos
-  #  tos = []
+  bcc = API.settings.service.openaccessbutton.notify.deposit ? ['joe@righttoresearch.org','shared@openaccessbutton.org']
   tos = []
   if typeof uc?.owner is 'string' and uc.owner.indexOf('@') isnt -1
     tos.push uc.owner
@@ -297,7 +293,7 @@ API.service.oab.deposit = (d, options={}, files, uid) ->
   ed.adminlink += 'email=' + ed.email
   tmpl = API.mail.template dep.type + '_deposit.html'
   sub = API.service.oab.substitute tmpl?.content, ed
-  if perms.file?.archivable isnt false # so when true or when undefined if no file is given
+  if (dep.type isnt 'review' or (files? and files.length)) and perms.file?.archivable isnt false # so when true or when undefined if no file is given
     ml =
       from: 'deposits@openaccessbutton.org'
       to: tos
@@ -434,7 +430,7 @@ API.service.oab.receive = (rid,files,url,title,description,firstname,lastname,cr
     API.service.oab.admin(r._id,'successful_upload') if up.publish
     API.mail.send
       service: 'openaccessbutton'
-      from: 'natalia.norori@openaccessbutton.org'
+      from: 'notify@openaccessbutton.org'
       to: API.settings.service.openaccessbutton.notify.receive
       subject: 'Request ' + r._id + ' received' + (if r.received.url? then ' - URL provided' else (if up.publish then ' - file published on Zenodo' else ' - zenodo publish required'))
       text: (if API.settings.dev then 'https://dev.openaccessbutton.org/request/' else 'https://openaccessbutton.org/request/') + r._id

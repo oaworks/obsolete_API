@@ -249,19 +249,25 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/api.openaccessbutton.org/privkey.pem;
 
     location /availability {
-        proxy_pass https://bg.oa.works/availability;
+        proxy_pass https://bg.api.oa.works/availability;
         proxy_redirect off;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
     location /find {
-        proxy_pass https://bg.oa.works/find;
+        proxy_pass https://bg.api.oa.works/find;
+        proxy_redirect off;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+    location /metadata {
+        proxy_pass https://bg.api.oa.works/metadata;
         proxy_redirect off;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
     location /permissions {
-        proxy_pass https://bg.oa.works/permissions;
+        proxy_pass https://bg.api.oa.works/permissions;
         proxy_redirect off;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
