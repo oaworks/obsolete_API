@@ -1,5 +1,5 @@
 
-# Open Access Button API
+# OBSOLETE Open Access Button API
 
 
 This repo will automatically deploy changes committed to the API. There is a develop branch and a master branch.
